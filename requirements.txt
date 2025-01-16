@@ -1,0 +1,13 @@
+tqdm==4.66.1
+tensorboard==2.16.2
+shapely==2.0.2
+trimesh==3.23.5
+numba==0.58.1
+numpy==1.25.1
+networkx==3.1
+matplotlib==3.7.2
+vscodedebugvisualizer==0.1.0
+pre-commit==3.7.0
+torch_geometric==2.6.1
+torch_scatter==2.1.2
+pyvista==0.44.2
