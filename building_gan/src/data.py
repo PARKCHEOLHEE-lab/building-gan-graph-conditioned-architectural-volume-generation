@@ -34,6 +34,9 @@ class DataCreatorHelper:
             torch.tensor(local_graph_labels), num_classes=configuration.NUM_CLASSES
         )
 
+        assert len(local_graph_floor_levels) == len(local_graph_nodes)
+        assert len(local_graph_labels) == len(local_graph_nodes)
+
         # computes local graph edge indices
         local_graph_adjacency_matrix = torch.zeros(size=(len(local_graph_nodes), len(local_graph_nodes)))
         for local_node in local_graph_nodes:
@@ -125,6 +128,11 @@ class DataCreatorHelper:
         voxel_graph_floor_levels = torch.tensor(voxel_graph_floor_levels)
         voxel_graph_features = torch.tensor(voxel_graph_features)
         voxel_graph_projection = torch.tensor(voxel_graph_projection)
+
+        assert len(voxel_graph_labels) == len(voxel_graph_nodes)
+        assert len(voxel_graph_floor_levels) == len(voxel_graph_nodes)
+        assert len(voxel_graph_features) == len(voxel_graph_nodes)
+        assert len(voxel_graph_projection) == len(voxel_graph_nodes)
 
         return {
             "far": far,
