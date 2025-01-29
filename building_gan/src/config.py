@@ -30,6 +30,9 @@ class DataConfiguration:
     LOCAL_GRAPH_DATA_PATH = os.path.join(DATA_PATH, "local_graph_data")
     VOXEL_DATA_PATH = os.path.join(DATA_PATH, "voxel_data")
 
+    NEGATIVE_SAMPLING_MULTIPLIER = 2
+    NORMALIZATION_FACTOR = 100
+
 
 class Configuration(ProgramMap, DataConfiguration):
     def __init__(self):
