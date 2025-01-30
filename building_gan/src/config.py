@@ -32,6 +32,8 @@ class DataConfiguration:
     LOCAL_GRAPH_DATA_PATH = os.path.join(DATA_PATH, "local_graph_data")
     VOXEL_GRAPH_DATA_PATH = os.path.join(DATA_PATH, "voxel_data")
 
+    SAVE_DATA_PATH = os.path.abspath(os.path.join(os.path.dirname(__file__), "../data/6types-processed_data"))
+
     NEGATIVE_SAMPLING_MULTIPLIER = 2
     NORMALIZATION_FACTOR = 100
 
