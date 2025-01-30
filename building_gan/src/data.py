@@ -20,7 +20,8 @@ class GraphData(Data):
 
         self.far = processed_data["far"]
         self.type_ratio = processed_data["type_ratio"]
-        self.local_graph_labels = processed_data["local_graph_labels"]
+        self.local_graph_types = processed_data["local_graph_types"]
+        self.local_graph_floor_levels = processed_data["local_graph_floor_levels"]
         self.local_graph_edge_indices = processed_data["local_graph_edge_indices"]
         self.voxel_graph_labels = processed_data["voxel_graph_labels"]
         self.voxel_graph_features = processed_data["voxel_graph_features"]
@@ -39,21 +40,21 @@ class DataCreatorHelper:
         # processes local graph data
         local_graph_unique_indices = {}
         local_graph_floor_levels = []
-        local_graph_labels = []
+        local_graph_types = []
 
         local_graph_nodes = local_graph_data["node"]
         for ni, local_node in enumerate(local_graph_nodes):
             unique_index = local_node["floor"], local_node["type"], local_node["type_id"]
             local_graph_unique_indices[unique_index] = ni
             local_graph_floor_levels.append(local_node["floor"])
-            local_graph_labels.append(local_node["type"])
+            local_graph_types.append(local_node["type"])
 
-        local_graph_labels = torch.nn.functional.one_hot(
-            torch.tensor(local_graph_labels), num_classes=configuration.NUM_CLASSES
+        local_graph_types = torch.nn.functional.one_hot(
+            torch.tensor(local_graph_types), num_classes=configuration.NUM_CLASSES
         )
 
         assert len(local_graph_floor_levels) == len(local_graph_nodes)
-        assert len(local_graph_labels) == len(local_graph_nodes)
+        assert len(local_graph_types) == len(local_graph_nodes)
 
         # computes local graph edge indices
         local_graph_adjacency_matrix = torch.zeros(size=(len(local_graph_nodes), len(local_graph_nodes)))
@@ -155,7 +156,8 @@ class DataCreatorHelper:
             {
                 "far": far,
                 "type_ratio": type_ratio,
-                "local_graph_labels": local_graph_labels,
+                "local_graph_types": local_graph_types,
+                "local_graph_floor_levels": local_graph_floor_levels,
                 "local_graph_edge_indices": local_graph_edge_indices,
                 "voxel_graph_labels": voxel_graph_labels,
                 "voxel_graph_features": voxel_graph_features,
