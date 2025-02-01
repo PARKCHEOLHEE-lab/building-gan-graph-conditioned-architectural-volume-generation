@@ -14,7 +14,7 @@ from building_gan.src.config import Configuration
 
 class GraphData(Data):
     def __init__(self, processed_data: dict):
-        super().__init__(self)
+        super().__init__()
 
         self.processed_data = processed_data
 
