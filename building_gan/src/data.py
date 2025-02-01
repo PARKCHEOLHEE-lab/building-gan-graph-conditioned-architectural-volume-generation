@@ -64,20 +64,28 @@ class GraphDataset(Dataset):
         super().__init__()
         self.configuration = configuration
 
-        self.graph_data_files = [
-            os.path.join(self.configuration.SAVE_DATA_PATH, d) for d in os.listdir(self.configuration.SAVE_DATA_PATH)
+        self.local_graph_data_files = [
+            os.path.join(self.configuration.SAVE_DATA_PATH, d)
+            for d in os.listdir(self.configuration.SAVE_DATA_PATH)
+            if d.endswith(configuration.LOCAL_DATA_SUFFIX)
         ][:slicer]
 
-        self.graph_data = [torch.load(d) for d in self.graph_data_files]
+        self.voxel_graph_data_files = [
+            os.path.join(self.configuration.SAVE_DATA_PATH, d)
+            for d in os.listdir(self.configuration.SAVE_DATA_PATH)
+            if d.endswith(configuration.VOXEL_DATA_SUFFIX)
+        ][:slicer]
 
-        self.local_graph_data = []
-        self.voxel_graph_data = []
+        assert len(self.local_graph_data_files) == len(self.voxel_graph_data_files)
+
+        self.local_graph_data = [torch.load(d) for d in self.local_graph_data_files]
+        self.voxel_graph_data = [torch.load(d) for d in self.voxel_graph_data_files]
 
     def __getitem__(self, i):
-        return self.graph_data[i]
+        return self.local_graph_data[i], self.voxel_graph_data[i]
 
     def __len__(self):
-        return len(self.graph_data)
+        return len(self.local_graph_data)
 
 
 class DataCreatorHelper:
@@ -273,8 +281,8 @@ class DataCreator(DataCreatorHelper):
             )
 
             data_number = "".join([s for s in global_graph_path.split("/")[-1] if s.isdigit()])
-            processed_data_name_voxel = f"{data_number}_voxel.pt"
-            processed_data_name_local = f"{data_number}_local.pt"
+            processed_data_name_voxel = f"{data_number}{self.configuration.LOCAL_DATA_SUFFIX}"
+            processed_data_name_local = f"{data_number}{self.configuration.VOXEL_DATA_SUFFIX}"
 
             torch.save(local_graph_data, os.path.join(self.configuration.SAVE_DATA_PATH, processed_data_name_local))
             torch.save(voxel_graph_data, os.path.join(self.configuration.SAVE_DATA_PATH, processed_data_name_voxel))
