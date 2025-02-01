@@ -4,6 +4,7 @@ import json
 import torch
 
 from tqdm import tqdm
+from torch.utils.data import Dataset
 from torch_geometric.data import Data
 
 if os.path.abspath(os.path.join(os.path.dirname(__file__), "../../")) in sys.path:
@@ -12,21 +13,71 @@ if os.path.abspath(os.path.join(os.path.dirname(__file__), "../../")) in sys.pat
 from building_gan.src.config import Configuration
 
 
-class GraphData(Data):
-    def __init__(self, processed_data: dict):
+class LocalGraphData(Data):
+    def __init__(self, local_graph_data: dict):
         super().__init__()
 
-        self.processed_data = processed_data
+        self.local_graph_data = local_graph_data
 
-        self.far = processed_data["far"]
-        self.type_ratio = processed_data["type_ratio"]
-        self.local_graph_types = processed_data["local_graph_types"]
-        self.local_graph_floor_levels = processed_data["local_graph_floor_levels"]
-        self.local_graph_edge_indices = processed_data["local_graph_edge_indices"]
-        self.voxel_graph_labels = processed_data["voxel_graph_labels"]
-        self.voxel_graph_features = processed_data["voxel_graph_features"]
-        self.voxel_graph_edge_indices = processed_data["voxel_graph_edge_indices"]
-        self.voxel_and_local_cross_edge_indices = processed_data["voxel_and_local_cross_edge_indices"]
+        local_graph_types = self.local_graph_data["local_graph_types"]
+        local_graph_type_ratio_per_node = local_graph_types * self.local_graph_data["type_ratio"]
+        local_graph_far_per_node = torch.zeros(local_graph_types.shape[0], 1) + self.local_graph_data["far"]
+        local_graph_floor_levels = self.local_graph_data["local_graph_floor_levels"].unsqueeze(0).t()
+
+        self.x = torch.cat(
+            [
+                local_graph_types,
+                local_graph_type_ratio_per_node,
+                local_graph_far_per_node,
+                local_graph_floor_levels,
+            ],
+            dim=1,
+        )
+
+        self.edge_index = self.local_graph_data["local_graph_edge_indices"]
+
+
+class VoxelGraphData(Data):
+    def __init__(self, voxel_graph_data: dict):
+        super().__init__()
+        self.voxel_graph_data = voxel_graph_data
+
+        voxel_graph_types = self.voxel_graph_data["voxel_graph_types"]
+        voxel_graph_features = self.voxel_graph_data["voxel_graph_features"]
+        voxel_graph_far_per_node = torch.zeros(voxel_graph_types.shape[0], 1) + self.voxel_graph_data["far"]
+        voxel_graph_floor_levels = self.voxel_graph_data["voxel_graph_floor_levels"].unsqueeze(0).t()
+
+        self.x = torch.cat(
+            [
+                voxel_graph_features,
+                voxel_graph_far_per_node,
+                voxel_graph_floor_levels,
+            ],
+            dim=1,
+        )
+
+        self.edge_index = voxel_graph_data["voxel_graph_edge_indices"]
+
+
+class GraphDataset(Dataset):
+    def __init__(self, configuration: Configuration, slicer: int = 1e10):
+        super().__init__()
+        self.configuration = configuration
+
+        self.graph_data_files = [
+            os.path.join(self.configuration.SAVE_DATA_PATH, d) for d in os.listdir(self.configuration.SAVE_DATA_PATH)
+        ][:slicer]
+
+        self.graph_data = [torch.load(d) for d in self.graph_data_files]
+
+        self.local_graph_data = []
+        self.voxel_graph_data = []
+
+    def __getitem__(self, i):
+        return self.graph_data[i]
+
+    def __len__(self):
+        return len(self.graph_data)
 
 
 class DataCreatorHelper:
@@ -52,6 +103,9 @@ class DataCreatorHelper:
         local_graph_types = torch.nn.functional.one_hot(
             torch.tensor(local_graph_types), num_classes=configuration.NUM_CLASSES
         )
+
+        local_graph_floor_levels = torch.tensor(local_graph_floor_levels)
+        local_graph_floor_levels_normalized = local_graph_floor_levels / configuration.FLOOR_LEVEL_NORM_FACTOR
 
         assert len(local_graph_floor_levels) == len(local_graph_nodes)
         assert len(local_graph_types) == len(local_graph_nodes)
@@ -81,7 +135,7 @@ class DataCreatorHelper:
         # process voxel graph data
         voxel_graph_unique_indices = {}
         voxel_graph_features = []
-        voxel_graph_labels = []
+        voxel_graph_types = []
         voxel_graph_floor_levels = []
 
         voxel_graph_nodes = voxel_graph_data["voxel_node"]
@@ -100,9 +154,9 @@ class DataCreatorHelper:
             )
 
             if voxel_node["type"] < 0:
-                voxel_graph_labels.append([0] * configuration.NUM_CLASSES)
+                voxel_graph_types.append([0] * configuration.NUM_CLASSES)
             else:
-                voxel_graph_labels.append(
+                voxel_graph_types.append(
                     torch.nn.functional.one_hot(
                         torch.tensor(voxel_node["type"]), num_classes=configuration.NUM_CLASSES
                     ).tolist()
@@ -120,11 +174,12 @@ class DataCreatorHelper:
 
         voxel_graph_edge_indices = voxel_graph_adjacency_matrix.nonzero().t()
 
-        voxel_graph_labels = torch.tensor(voxel_graph_labels)
+        voxel_graph_types = torch.tensor(voxel_graph_types)
         voxel_graph_floor_levels = torch.tensor(voxel_graph_floor_levels)
+        voxel_graph_floor_levels_normalized = voxel_graph_floor_levels / configuration.FLOOR_LEVEL_NORM_FACTOR
         voxel_graph_features = torch.tensor(voxel_graph_features)
 
-        assert len(voxel_graph_labels) == len(voxel_graph_nodes)
+        assert len(voxel_graph_types) == len(voxel_graph_nodes)
         assert len(voxel_graph_floor_levels) == len(voxel_graph_nodes)
         assert len(voxel_graph_features) == len(voxel_graph_nodes)
 
@@ -152,19 +207,28 @@ class DataCreatorHelper:
 
         assert len(local_graph_cross_edge_indices) == len(voxel_graph_cross_edge_indices)
 
-        return GraphData(
-            {
+        local_graph_data = LocalGraphData(
+            local_graph_data={
                 "far": far,
                 "type_ratio": type_ratio,
                 "local_graph_types": local_graph_types,
-                "local_graph_floor_levels": local_graph_floor_levels,
+                "local_graph_floor_levels": local_graph_floor_levels_normalized,
                 "local_graph_edge_indices": local_graph_edge_indices,
-                "voxel_graph_labels": voxel_graph_labels,
+            }
+        )
+
+        voxel_graph_data = VoxelGraphData(
+            voxel_graph_data={
+                "far": far,
+                "voxel_graph_types": voxel_graph_types,
+                "voxel_graph_floor_levels": voxel_graph_floor_levels_normalized,
                 "voxel_graph_features": voxel_graph_features,
                 "voxel_graph_edge_indices": voxel_graph_edge_indices,
                 "voxel_and_local_cross_edge_indices": voxel_and_local_cross_edge_indices,
             }
         )
+
+        return local_graph_data, voxel_graph_data
 
 
 class DataCreator(DataCreatorHelper):
@@ -201,13 +265,16 @@ class DataCreator(DataCreatorHelper):
             with open(voxel_graph_path, "r") as f:
                 voxel_graph_data = json.load(f)
 
-            processed_data = self.process_data(
+            local_graph_data, voxel_graph_data = self.process_data(
                 global_graph_data,
                 local_graph_data,
                 voxel_graph_data,
                 self.configuration,
             )
 
-            processed_data_name = "".join([s for s in global_graph_path.split("/")[-1] if s.isdigit()]) + ".pt"
+            data_number = "".join([s for s in global_graph_path.split("/")[-1] if s.isdigit()])
+            processed_data_name_voxel = f"{data_number}_voxel.pt"
+            processed_data_name_local = f"{data_number}_local.pt"
 
-            torch.save(processed_data, os.path.join(self.configuration.SAVE_DATA_PATH, processed_data_name))
+            torch.save(local_graph_data, os.path.join(self.configuration.SAVE_DATA_PATH, processed_data_name_local))
+            torch.save(voxel_graph_data, os.path.join(self.configuration.SAVE_DATA_PATH, processed_data_name_voxel))
