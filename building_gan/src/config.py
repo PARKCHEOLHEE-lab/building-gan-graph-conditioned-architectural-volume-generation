@@ -36,6 +36,7 @@ class DataConfiguration:
 
     NEGATIVE_SAMPLING_MULTIPLIER = 2
     NORMALIZATION_FACTOR = 100
+    FLOOR_LEVEL_NORM_FACTOR = 100
 
 
 class Configuration(ProgramMap, DataConfiguration):
