@@ -38,6 +38,9 @@ class DataConfiguration:
     NORMALIZATION_FACTOR = 100
     FLOOR_LEVEL_NORM_FACTOR = 100
 
+    LOCAL_DATA_SUFFIX = "_local.pt"
+    VOXEL_DATA_SUFFIX = "_voxel.pt"
+
 
 class Configuration(ProgramMap, DataConfiguration):
     def __init__(self):
