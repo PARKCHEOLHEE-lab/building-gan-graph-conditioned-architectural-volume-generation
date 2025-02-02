@@ -45,6 +45,10 @@ class DataConfiguration:
 class ModelConfiguration:
     BATCH_SIZE = 128
     NUM_WORKERS = 3
+    EPOCHS = 1
+
+    HIDDEN_DIM = 128
+    NOISE_DIM = 128
 
 
 class Configuration(ProgramMap, DataConfiguration, ModelConfiguration):
