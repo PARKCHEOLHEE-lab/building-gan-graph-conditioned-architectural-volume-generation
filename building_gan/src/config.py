@@ -42,6 +42,11 @@ class DataConfiguration:
     VOXEL_DATA_SUFFIX = "_voxel.pt"
 
 
-class Configuration(ProgramMap, DataConfiguration):
+class ModelConfiguration:
+    BATCH_SIZE = 128
+    NUM_WORKERS = 3
+
+
+class Configuration(ProgramMap, DataConfiguration, ModelConfiguration):
     def __init__(self):
         pass
