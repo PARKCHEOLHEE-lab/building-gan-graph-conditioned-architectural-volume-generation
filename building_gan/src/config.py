@@ -48,7 +48,10 @@ class ModelConfiguration:
     EPOCHS = 1
 
     HIDDEN_DIM = 128
-    NOISE_DIM = 128
+    PROGRAM_NOISE_DIM = 128
+    VOXEL_NOISE_DIM = 128
+
+    LEARNING_RATE = 0.0002
 
 
 class Configuration(ProgramMap, DataConfiguration, ModelConfiguration):
