@@ -14,14 +14,14 @@ from building_gan.src.config import Configuration
 
 class LocalGraphData:
     def __init__(self, local_graph_data: dict):
-        local_graph_types = local_graph_data["local_graph_types"]
-        local_graph_type_ratio_per_node = local_graph_types * local_graph_data["type_ratio"]
-        local_graph_far_per_node = torch.zeros(local_graph_types.shape[0], 1) + local_graph_data["far"]
+        local_graph_types_onehot = local_graph_data["local_graph_types_onehot"]
+        local_graph_type_ratio_per_node = local_graph_types_onehot * local_graph_data["type_ratio"]
+        local_graph_far_per_node = torch.zeros(local_graph_types_onehot.shape[0], 1) + local_graph_data["far"]
         local_graph_floor_levels = local_graph_data["local_graph_floor_levels"].unsqueeze(0).t()
 
         self.x = torch.cat(
             [
-                local_graph_types,
+                local_graph_types_onehot,
                 local_graph_type_ratio_per_node,
                 local_graph_far_per_node,
                 local_graph_floor_levels,
@@ -30,7 +30,7 @@ class LocalGraphData:
         )
 
         self.edge_index = local_graph_data["local_graph_edge_indices"]
-
+        self.local_graph_node_cluster = local_graph_data["local_graph_node_cluster"]
         self.data_number = torch.tensor(int(local_graph_data["data_number"]))
 
 
@@ -51,9 +51,7 @@ class VoxelGraphData:
         )
 
         self.edge_index = voxel_graph_data["voxel_graph_edge_indices"]
-
         self.voxel_and_local_cross_edge_indices = voxel_graph_data["voxel_and_local_cross_edge_indices"]
-
         self.data_number = torch.tensor(int(voxel_graph_data["data_number"]))
 
 
@@ -80,7 +78,13 @@ class GraphDataset(Dataset):
         self.voxel_graph_data = []
         for local_graph_file, voxel_graph_file in zip(self.local_graph_data_files, self.voxel_graph_data_files):
             local_graph = torch.load(local_graph_file)
-            self.local_graph_data.append(Data(x=local_graph.x, edge_index=local_graph.edge_index))
+            self.local_graph_data.append(
+                Data(
+                    x=local_graph.x,
+                    edge_index=local_graph.edge_index,
+                    node_cluster=local_graph.local_graph_node_cluster,
+                )
+            )
 
             voxel_graph = torch.load(voxel_graph_file)
             self.voxel_graph_data.append(
@@ -106,28 +110,29 @@ class DataCreatorHelper:
         voxel_graph_data: dict,
         data_number: str,
         configuration: Configuration,
-    ) -> dict:
+    ):
         # processes local graph data
         local_graph_unique_indices = {}
         local_graph_floor_levels = []
-        local_graph_types = []
+        local_graph_node_cluster = []
 
         local_graph_nodes = local_graph_data["node"]
         for ni, local_node in enumerate(local_graph_nodes):
             unique_index = local_node["floor"], local_node["type"], local_node["type_id"]
             local_graph_unique_indices[unique_index] = ni
             local_graph_floor_levels.append(local_node["floor"])
-            local_graph_types.append(local_node["type"])
+            local_graph_node_cluster.append(local_node["type"])
 
-        local_graph_types = torch.nn.functional.one_hot(
-            torch.tensor(local_graph_types), num_classes=configuration.NUM_CLASSES
+        local_graph_types_onehot = torch.nn.functional.one_hot(
+            torch.tensor(local_graph_node_cluster), num_classes=configuration.NUM_CLASSES
         )
 
+        local_graph_node_cluster = torch.tensor(local_graph_node_cluster)
         local_graph_floor_levels = torch.tensor(local_graph_floor_levels)
         local_graph_floor_levels_normalized = local_graph_floor_levels / configuration.FLOOR_LEVEL_NORM_FACTOR
 
         assert len(local_graph_floor_levels) == len(local_graph_nodes)
-        assert len(local_graph_types) == len(local_graph_nodes)
+        assert len(local_graph_types_onehot) == len(local_graph_nodes)
 
         # computes local graph edge indices
         local_graph_adjacency_matrix = torch.zeros(size=(len(local_graph_nodes), len(local_graph_nodes)))
@@ -228,7 +233,8 @@ class DataCreatorHelper:
         local_graph_data = {
             "far": far,
             "type_ratio": type_ratio,
-            "local_graph_types": local_graph_types,
+            "local_graph_node_cluster": local_graph_node_cluster,
+            "local_graph_types_onehot": local_graph_types_onehot,
             "local_graph_floor_levels": local_graph_floor_levels_normalized,
             "local_graph_edge_indices": local_graph_edge_indices,
             "data_number": data_number,
