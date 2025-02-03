@@ -12,10 +12,8 @@ if os.path.abspath(os.path.join(os.path.dirname(__file__), "../../")) in sys.pat
 from building_gan.src.config import Configuration
 
 
-class LocalGraphData(Data):
+class LocalGraphData:
     def __init__(self, local_graph_data: dict):
-        super().__init__()
-
         local_graph_types = local_graph_data["local_graph_types"]
         local_graph_type_ratio_per_node = local_graph_types * local_graph_data["type_ratio"]
         local_graph_far_per_node = torch.zeros(local_graph_types.shape[0], 1) + local_graph_data["far"]
@@ -36,10 +34,8 @@ class LocalGraphData(Data):
         self.data_number = torch.tensor(int(local_graph_data["data_number"]))
 
 
-class VoxelGraphData(Data):
+class VoxelGraphData:
     def __init__(self, voxel_graph_data: dict):
-        super().__init__()
-
         voxel_graph_types = voxel_graph_data["voxel_graph_types"]
         voxel_graph_features = voxel_graph_data["voxel_graph_features"]
         voxel_graph_far_per_node = torch.zeros(voxel_graph_types.shape[0], 1) + voxel_graph_data["far"]
@@ -80,15 +76,26 @@ class GraphDataset(Dataset):
 
         assert len(self.local_graph_data_files) == len(self.voxel_graph_data_files)
 
-        # self.local_graph_data = [torch.load(d) for d in self.local_graph_data_files]
-        # self.voxel_graph_data = [torch.load(d) for d in self.voxel_graph_data_files]
+        self.local_graph_data = []
+        self.voxel_graph_data = []
+        for local_graph_file, voxel_graph_file in zip(self.local_graph_data_files, self.voxel_graph_data_files):
+            local_graph = torch.load(local_graph_file)
+            self.local_graph_data.append(Data(x=local_graph.x, edge_index=local_graph.edge_index))
+
+            voxel_graph = torch.load(voxel_graph_file)
+            self.voxel_graph_data.append(
+                Data(
+                    x=voxel_graph.x,
+                    edge_index=voxel_graph.edge_index,
+                    cross_edge_index=voxel_graph.voxel_and_local_cross_edge_indices,
+                )
+            )
 
     def __getitem__(self, i):
-        return Data(**torch.load(self.local_graph_data_files[i])), Data(**torch.load(self.voxel_graph_data_files[i]))
-        # return LocalGraphData(self.local_graph_data[i]), VoxelGraphData(self.voxel_graph_data[i])
+        return self.local_graph_data[i], self.voxel_graph_data[i]
 
     def __len__(self):
-        return len(self.local_graph_data_files)
+        return len(self.local_graph_data)
 
 
 class DataCreatorHelper:
