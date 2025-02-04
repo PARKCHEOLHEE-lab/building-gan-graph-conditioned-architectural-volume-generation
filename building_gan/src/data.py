@@ -30,6 +30,7 @@ class LocalGraphData:
         )
 
         self.edge_index = local_graph_data["local_graph_edge_indices"]
+        self.local_graph_type_ratio_per_node = local_graph_type_ratio_per_node
         self.local_graph_node_cluster = local_graph_data["local_graph_node_cluster"]
         self.data_number = torch.tensor(int(local_graph_data["data_number"]))
 
@@ -83,6 +84,7 @@ class GraphDataset(Dataset):
                     x=local_graph.x,
                     edge_index=local_graph.edge_index,
                     node_cluster=local_graph.local_graph_node_cluster,
+                    node_ratio=local_graph.local_graph_type_ratio_per_node,
                 )
             )
 
