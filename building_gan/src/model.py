@@ -20,31 +20,33 @@ class ProgramGNNBlock(tgnn.MessagePassing):
     def __init__(self, hidden_dim: int):
         super().__init__(aggr="mean")
 
-        self.message_mlp = nn.Sequential(nn.Linear(2 * hidden_dim, hidden_dim), nn.LeakyReLU())
+        self.mlp_message = nn.Sequential(nn.Linear(hidden_dim * 2, hidden_dim), nn.LeakyReLU())
 
-        self.update_mlp = nn.Sequential(nn.Linear(2 * hidden_dim, hidden_dim), nn.LeakyReLU())
+        self.mlp_update = nn.Sequential(nn.Linear(hidden_dim * 3, hidden_dim), nn.LeakyReLU())
 
-    def forward(self, x, edge_index, node_cluster):
+    def forward(self, x, edge_index, node_cluster, node_ratio):
+        return self.propagate(edge_index, x=x, node_cluster=node_cluster, node_ratio=node_ratio)
+
+    def message(self, x_i, x_j):
         # (2) \frac{1}/{|Ne(i)|} \sum_{j \in Ne(i)} MLP^p_{message}([x^t_i, x^t_j]) with aggr="mean"
-        m = self.propagate(edge_index, x=x)
 
+        return self.mlp_message(torch.cat([x_i, x_j], dim=-1))
+
+    def update(self, aggr_out, x, node_cluster=None, node_ratio=None):
         # (3) c^t_i = Mean_{j \in Cl(i)}({x^t_j})
+        #     https://pytorch-scatter.readthedocs.io/en/latest/functions/scatter.html
+
         c = utils.scatter(
             src=x,
             index=node_cluster,
             reduce="mean",
         )[node_cluster]
 
-        print(m, c)
-
-        return
-
-    def message(self, x_i, x_j):
-        return self.message_mlp(torch.cat([x_i, x_j], dim=-1))
-
-    def update(self, aggr_out, x):
         # (4) MLP^p_{update}([x^t_i, m^t_i, r_{Cl(i)}c^t_i, F])
-        return self.update_mlp(torch.cat([x, aggr_out], dim=-1))
+
+        c *= node_ratio.sum(dim=1).unsqueeze(0).t()
+
+        return self.mlp_update(torch.cat([x, aggr_out, c], dim=-1))
 
 
 class ProgramGNN(nn.Module):
@@ -52,18 +54,18 @@ class ProgramGNN(nn.Module):
         super().__init__()
 
         self.num_steps = num_steps
-        self.encoder = nn.Sequential(nn.Linear(input_dim + noise_dim, hidden_dim), nn.LeakyReLU())
+        self.mlp_encoder = nn.Sequential(nn.Linear(input_dim + noise_dim, hidden_dim), nn.LeakyReLU())
 
         self.layers = nn.ModuleList([ProgramGNNBlock(hidden_dim) for _ in range(num_steps)])
 
     def forward(self, local_graph, z):
         # (1) MLP^p_{enc}([x_i, z^p_i, f])
         x = torch.cat([local_graph.x, z], dim=-1)
-        x = self.encoder(x)
+        x = self.mlp_encoder(x)
 
         # [(2), (3), (4)] compute message passing T times
         for layer in self.layers:
-            x = x + layer(x, local_graph.edge_index, local_graph.node_cluster)
+            x = x + layer(x, local_graph.edge_index, local_graph.node_cluster, local_graph.node_ratio)
 
         return x
 
