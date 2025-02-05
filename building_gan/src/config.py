@@ -51,7 +51,12 @@ class ModelConfiguration:
     PROGRAM_NOISE_DIM = 128
     VOXEL_NOISE_DIM = 128
 
+    PROGRAM_MESSAGE_PASSING_STEPS = 5
+    VOXEL_MESSAGE_PASSING_STEPS = 12
+
     LEARNING_RATE = 0.0002
+
+    DEVICE = "cuda"
 
 
 class Configuration(ProgramMap, DataConfiguration, ModelConfiguration):
