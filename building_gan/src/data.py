@@ -4,7 +4,7 @@ import json
 import torch
 
 from tqdm import tqdm
-from torch_geometric.data import Data, Dataset
+from torch_geometric.data import Data, Dataset, Batch
 
 if os.path.abspath(os.path.join(os.path.dirname(__file__), "../../")) in sys.path:
     sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), "../../")))
@@ -102,6 +102,36 @@ class GraphDataset(Dataset):
 
     def __len__(self):
         return len(self.local_graph_data)
+
+    @staticmethod
+    def collate_fn(batch):
+        local_graphs, voxel_graphs = zip(*batch)
+
+        original_cross_edges = []
+        cumulative_sum_local_nodes = 0
+        cumulative_sum_voxel_nodes = 0
+
+        for i, (local_graph, voxel_graph) in enumerate(zip(local_graphs, voxel_graphs)):
+            cross_edges = voxel_graph.cross_edge_index.clone()
+
+            # adjust cross_edge_index for batch
+            if i > 0:
+                cross_edges[0] += cumulative_sum_local_nodes
+                cross_edges[1] += cumulative_sum_voxel_nodes
+
+            original_cross_edges.append(cross_edges)
+
+            cumulative_sum_local_nodes += local_graph.num_nodes
+            cumulative_sum_voxel_nodes += voxel_graph.num_nodes
+
+        local_batch = Batch.from_data_list(local_graphs)
+        voxel_batch = Batch.from_data_list(voxel_graphs)
+        voxel_batch.cross_edge_index = torch.cat(original_cross_edges, dim=1)
+
+        assert voxel_batch.cross_edge_index[0].max() + 1 == local_batch.num_nodes
+        assert voxel_batch.cross_edge_index[1].max() + 1 == voxel_batch.num_nodes
+
+        return local_batch, voxel_batch
 
 
 class DataCreatorHelper:
