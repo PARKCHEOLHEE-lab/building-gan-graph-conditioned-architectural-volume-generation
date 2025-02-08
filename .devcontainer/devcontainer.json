@@ -27,7 +27,8 @@
                 "Meezilla.json",
                 "njpwerner.autodocstring",
                 "ms-azuretools.vscode-docker",
-                "ms-toolsai.jupyter"
+                "ms-toolsai.jupyter",
+                "eamodio.gitlens"
 			]
 		}
 	},
