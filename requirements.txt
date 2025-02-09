@@ -9,6 +9,6 @@ matplotlib==3.7.2
 vscodedebugvisualizer==0.1.0
 pre-commit==3.7.0
 torch_geometric==2.6.1
-torch_scatter==2.1.2
+torch-scatter==2.1.2
 ipywidgets==8.1.5
 ipympl==0.9.6
