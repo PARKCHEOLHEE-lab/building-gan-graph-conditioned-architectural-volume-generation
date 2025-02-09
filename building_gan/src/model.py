@@ -199,7 +199,7 @@ class VoxelGNN(tgnn.MessagePassing):
         return v, mask, attention_soft, attention_hard
 
 
-class BuildingGenerator(nn.Module):
+class Generator(nn.Module):
     def __init__(
         self,
         program_input_dim,
@@ -260,7 +260,7 @@ if __name__ == "__main__":
     )
 
     # Training loop
-    generator = BuildingGenerator(
+    generator = Generator(
         program_input_dim=dataloader.dataset[0][0].num_features,
         voxel_input_dim=dataloader.dataset[0][1].num_features,
         configuration=configuration,
