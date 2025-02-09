@@ -1,7 +1,32 @@
 import torch
+import torch_scatter
 import torch.nn as nn
 import torch_geometric.nn as tgnn
 import torch_geometric.utils as tgutils
+
+
+class GumbelSoftmax(nn.Module):
+    def __init__(self):
+        super().__init__()
+
+    def forward(self, e, cross_edge_index, tau=1.0):
+        gumbel_noise = -torch.log(-torch.log(torch.rand_like(e)))
+        y = torch.softmax((e + gumbel_noise) / tau, dim=0)
+
+        num_voxels = cross_edge_index[1].max().item() + 1
+
+        # compute gumbel-softmax per index
+        y_max = torch_scatter.scatter_max(
+            src=y.cpu(),
+            index=cross_edge_index[1].cpu(),
+            dim_size=num_voxels,
+        )[1]
+
+        y_hard = torch.zeros_like(y)
+        y_hard.scatter_(-1, y_max.to(y.device), 1.0)
+        y_hard = y_hard - y.detach() + y
+
+        return y.unsqueeze(1), y_hard.unsqueeze(1)
 
 
 class PositionalEncoder(nn.Module):
@@ -34,11 +59,10 @@ class PointerBasedCrossModalModule(nn.Module):
 
         self.mlp_program = nn.Linear(hidden_dim, hidden_dim)
         self.mlp_voxel = nn.Linear(hidden_dim, hidden_dim)
-        self.mlp_mask = nn.Linear(hidden_dim, hidden_dim)
+        self.mlp_mask = nn.Sequential(nn.Linear(hidden_dim, hidden_dim), nn.LeakyReLU(), nn.Linear(hidden_dim, 1))
+        self.gumbel_softmax = GumbelSoftmax()
         self.theta = nn.Parameter(torch.Tensor(hidden_dim, 1))
         nn.init.xavier_normal_(self.theta)
-
-        self.attention = nn.Sequential(nn.Linear(2 * hidden_dim, hidden_dim), nn.Tanh(), nn.Linear(hidden_dim, 1))
 
     def forward(self, x, v, cross_edge_index):
         # Conceptually, these pointer modules should gradually improve the design.
@@ -53,15 +77,16 @@ class PointerBasedCrossModalModule(nn.Module):
 
         # (10) e_{k, i} = \theta^T \tanh(W_x x^T_i + W_v v^t_k) (10)
         e = self.theta.t() * torch.tanh(self.mlp_program(x_selected) + self.mlp_voxel(v_selected))
+        e = e.sum(dim=1)
 
         # (11) att_k = \text{gumbel softmax}(e_k)
-        attention = torch.nn.functional.gumbel_softmax(e, hard=True)
+        attention_soft, attention_hard = self.gumbel_softmax(e, cross_edge_index)
 
         # (12) v^{t+1}_k = v^t_k + mask_k \sum_i att_{k,i} x^T_i
-        summed = tgutils.scatter(src=x_selected * attention, index=cross_edge_index[1], reduce="sum")
+        summed = tgutils.scatter(src=x_selected * attention_soft, index=cross_edge_index[1], reduce="sum")
         v = v + mask * summed
 
-        return v
+        return v, mask, attention_soft, attention_hard
 
 
 class ProgramGNNBlock(tgnn.MessagePassing):
@@ -147,7 +172,7 @@ class VoxelGNN(tgnn.MessagePassing):
 
         self.layers = nn.ModuleList([VoxelGNNBlock(hidden_dim) for _ in range(num_steps)])
 
-    def forward(self, voxel_graph, z, x):
+    def forward(self, voxel_graph, z, x, skip_pointer=False):
         # (5) v^0_k MLP^v_{enc}([v_k, z^v_k]) + PE(story_k)
         v = self.mlp_encoder(torch.cat([voxel_graph.x, z], dim=-1))
         v = self.positional_encoder(v, voxel_graph.voxel_level)
@@ -161,10 +186,17 @@ class VoxelGNN(tgnn.MessagePassing):
             )
 
             # "baseline model uses 12 steps of message passing and call the pointer module once every 2 steps"
-            if (li + 1) % 2 == 0:
-                v = self.pointer_based_cross_modal_module(x, v, voxel_graph.cross_edge_index)
+            if (li + 1) % 2 == 0 and not skip_pointer:
+                v, mask, attention_soft, attention_hard = self.pointer_based_cross_modal_module(
+                    x, v, voxel_graph.cross_edge_index
+                )
 
-        return v
+        if skip_pointer:
+            mask = None
+            attention_soft = None
+            attention_hard = None
+
+        return v, mask, attention_soft, attention_hard
 
 
 class BuildingGenerator(nn.Module):
@@ -198,8 +230,13 @@ class BuildingGenerator(nn.Module):
         # computes equations (1), (2), (3), (4)
         x = self.program_gnn(local_graph, program_noise)
 
-        # computes equastions (5), (6), (7), (8), (9), (10), (11), (12)
-        v = self.voxel_gnn(voxel_graph, voxel_noise, x)
+        # computes equations (5), (6), (7), (8), (9), (10), (11), (12)
+        v, mask, attention_soft, attention_hard = self.voxel_gnn(voxel_graph, voxel_noise, x)
+
+        print(mask, attention_soft, attention_hard)
+
+        # mask_hard = (mask > 0.3).int()
+        # attention_hard = attention * mask_hard
 
         return v
 
