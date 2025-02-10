@@ -29,6 +29,7 @@ class LocalGraphData:
             dim=1,
         )
 
+        self.local_graph_types_onehot = local_graph_types_onehot
         self.edge_index = local_graph_data["local_graph_edge_indices"]
         self.local_graph_type_ratio_per_node = local_graph_type_ratio_per_node
         self.local_graph_node_cluster = local_graph_data["local_graph_node_cluster"]
@@ -84,6 +85,7 @@ class GraphDataset(Dataset):
                     edge_index=local_graph.edge_index,
                     node_cluster=local_graph.local_graph_node_cluster,
                     node_ratio=local_graph.local_graph_type_ratio_per_node,
+                    types_onehot=local_graph.local_graph_types_onehot,
                 )
             )
 
