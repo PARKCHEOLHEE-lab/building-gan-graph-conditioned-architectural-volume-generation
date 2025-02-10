@@ -13,12 +13,12 @@ class GumbelSoftmax(nn.Module):
         gumbel_noise = -torch.log(-torch.log(torch.rand_like(e)))
         y = torch.softmax((e + gumbel_noise) / tau, dim=0)
 
-        num_voxels = cross_edge_index[1].max().item() + 1
+        num_voxels = cross_edge_index.max().item() + 1
 
         # compute gumbel-softmax per index
         y_max = torch_scatter.scatter_max(
             src=y.cpu(),
-            index=cross_edge_index[1].cpu(),
+            index=cross_edge_index.cpu(),
             dim_size=num_voxels,
         )[1]
 
@@ -59,7 +59,7 @@ class PointerBasedCrossModalModule(nn.Module):
 
         self.mlp_program = nn.Linear(hidden_dim, hidden_dim)
         self.mlp_voxel = nn.Linear(hidden_dim, hidden_dim)
-        self.mlp_mask = nn.Sequential(nn.Linear(hidden_dim, hidden_dim), nn.LeakyReLU(), nn.Linear(hidden_dim, 1))
+        self.mlp_mask = nn.Sequential(nn.Linear(hidden_dim, hidden_dim), nn.LeakyReLU(), nn.Linear(hidden_dim, 2))
         self.gumbel_softmax = GumbelSoftmax()
         self.theta = nn.Parameter(torch.Tensor(hidden_dim, 1))
         nn.init.xavier_normal_(self.theta)
@@ -73,20 +73,25 @@ class PointerBasedCrossModalModule(nn.Module):
         v_selected = v[cross_edge_index[1]]
 
         # (9) mask_k = \sigma(MLP(v^t_k))
-        mask = self.mlp_mask(v).sigmoid()
+        mask_soft = nn.functional.gumbel_softmax(self.mlp_mask(v), dim=1)
+        mask_hard = torch.zeros_like(mask_soft)
+        mask_hard.scatter_(-1, mask_soft.argmax(dim=1, keepdim=True), 1.0)
+        mask_hard = mask_hard[:, 0].unsqueeze(1)
+        mask_soft = mask_soft[:, 0].unsqueeze(1)
+        mask_hard = mask_hard - mask_soft.detach() + mask_soft
 
         # (10) e_{k, i} = \theta^T \tanh(W_x x^T_i + W_v v^t_k) (10)
         e = self.theta.t() * torch.tanh(self.mlp_program(x_selected) + self.mlp_voxel(v_selected))
         e = e.sum(dim=1)
 
         # (11) att_k = \text{gumbel softmax}(e_k)
-        attention_soft, attention_hard = self.gumbel_softmax(e, cross_edge_index)
+        attention_soft, attention_hard = self.gumbel_softmax(e, cross_edge_index[1])
 
         # (12) v^{t+1}_k = v^t_k + mask_k \sum_i att_{k,i} x^T_i
         summed = tgutils.scatter(src=x_selected * attention_soft, index=cross_edge_index[1], reduce="sum")
-        v = v + mask * summed
+        v = v + mask_soft * summed
 
-        return v, mask, attention_soft, attention_hard
+        return v, mask_soft, mask_hard, attention_soft, attention_hard
 
 
 class ProgramGNNBlock(tgnn.MessagePassing):
@@ -172,9 +177,14 @@ class VoxelGNN(tgnn.MessagePassing):
 
         self.layers = nn.ModuleList([VoxelGNNBlock(hidden_dim) for _ in range(num_steps)])
 
-    def forward(self, voxel_graph, z, x, skip_pointer=False):
+    def forward(self, voxel_graph, x, z, skip_pointer=False):
         # (5) v^0_k MLP^v_{enc}([v_k, z^v_k]) + PE(story_k)
-        v = self.mlp_encoder(torch.cat([voxel_graph.x, z], dim=-1))
+
+        v = voxel_graph.x
+        if z is not None:
+            v = torch.cat([v, z], dim=-1)
+
+        v = self.mlp_encoder(v)
         v = self.positional_encoder(v, voxel_graph.voxel_level)
 
         # [(6), (7), (8), (9), (10), (11), (12)]
@@ -187,16 +197,17 @@ class VoxelGNN(tgnn.MessagePassing):
 
             # "baseline model uses 12 steps of message passing and call the pointer module once every 2 steps"
             if (li + 1) % 2 == 0 and not skip_pointer:
-                v, mask, attention_soft, attention_hard = self.pointer_based_cross_modal_module(
+                v, mask_soft, mask_hard, attention_soft, attention_hard = self.pointer_based_cross_modal_module(
                     x, v, voxel_graph.cross_edge_index
                 )
 
         if skip_pointer:
-            mask = None
+            mask_soft = None
+            mask_hard = None
             attention_soft = None
             attention_hard = None
 
-        return v, mask, attention_soft, attention_hard
+        return v, mask_soft, mask_hard, attention_soft, attention_hard
 
 
 class Generator(nn.Module):
@@ -222,26 +233,67 @@ class Generator(nn.Module):
             configuration.VOXEL_MESSAGE_PASSING_STEPS,
         )
 
-        self.pointer_based_cross_model_module = PointerBasedCrossModalModule(configuration.HIDDEN_DIM)
+        self.pointer_based_cross_modal_module = PointerBasedCrossModalModule(configuration.HIDDEN_DIM)
 
         self.to(configuration.DEVICE)
+
+    def construct_output(self, cross_edge_index, types_onehot, attention_soft, attention_hard, mask_hard, mask_soft):
+        types_onehot_selected = types_onehot[cross_edge_index[0]]
+
+        label_hard = tgutils.scatter(attention_hard * types_onehot_selected, index=cross_edge_index[1], reduce="sum")
+        label_hard *= mask_hard
+
+        label_soft = tgutils.scatter(attention_soft * types_onehot_selected, index=cross_edge_index[1], reduce="sum")
+        label_soft *= mask_soft
+
+        return label_hard, label_soft
 
     def forward(self, local_graph, voxel_graph, program_noise, voxel_noise):
         # computes equations (1), (2), (3), (4)
         x = self.program_gnn(local_graph, program_noise)
 
         # computes equations (5), (6), (7), (8), (9), (10), (11), (12)
-        v, mask, attention_soft, attention_hard = self.voxel_gnn(voxel_graph, voxel_noise, x)
+        v, mask_soft, mask_hard, attention_soft, attention_hard = self.voxel_gnn(voxel_graph, x, voxel_noise)
 
-        print(mask, attention_soft, attention_hard)
+        label_hard, label_soft = self.construct_output(
+            voxel_graph.cross_edge_index, local_graph.types_onehot, attention_soft, attention_hard, mask_hard, mask_soft
+        )
 
-        # mask_hard = (mask > 0.3).int()
-        # attention_hard = attention * mask_hard
+        return v, label_hard, label_soft
 
-        return v
+
+class Discriminator(nn.Module):
+    def __init__(self, voxel_input_dim, configuration):
+        super().__init__()
+
+        self.mlp_global = nn.Sequential(
+            nn.Linear(configuration.HIDDEN_DIM, configuration.HIDDEN_DIM),
+            nn.LeakyReLU(),
+            nn.Linear(configuration.HIDDEN_DIM, 1),
+            nn.Sigmoid(),
+        )
+
+        self.voxel_gnn = VoxelGNN(
+            input_dim=voxel_input_dim,
+            hidden_dim=configuration.HIDDEN_DIM,
+            noise_dim=0,
+            num_steps=configuration.VOXEL_MESSAGE_PASSING_STEPS,
+        )
+
+        self.to(configuration.DEVICE)
+
+    def forward(self, voxel_graph, label_hard):
+        v, *_ = self.voxel_gnn(voxel_graph, None, None, skip_pointer=True)
+
+        return self.mlp_global(v)
 
 
 if __name__ == "__main__":
+    import os
+    import sys
+
+    sys.path.append(os.path.join(os.path.dirname(__file__), "../../"))
+
     from torch.utils.data import DataLoader
     from building_gan.src.data import GraphDataset
     from building_gan.src.config import Configuration
@@ -253,7 +305,7 @@ if __name__ == "__main__":
     dataset = GraphDataset(configuration=configuration, slicer=128)
     dataloader = DataLoader(
         dataset,
-        batch_size=1,
+        batch_size=8,
         shuffle=True,
         num_workers=configuration.NUM_WORKERS,
         collate_fn=GraphDataset.collate_fn,
@@ -266,7 +318,10 @@ if __name__ == "__main__":
         configuration=configuration,
     )
 
-    optimizer = torch.optim.Adam(generator.parameters(), lr=configuration.LEARNING_RATE)
+    discriminator = Discriminator(voxel_input_dim=dataloader.dataset[0][1].num_features, configuration=configuration)
+
+    optimizer_generator = torch.optim.Adam(generator.parameters(), lr=configuration.LEARNING_RATE_GENERATOR)
+    optimizer_discriminator = torch.optim.Adam(discriminator.parameters(), lr=configuration.LEARNING_RATE_DISCRIMINATOR)
 
     for epoch in range(configuration.EPOCHS):
         for local_batch, voxel_batch in dataloader:
@@ -274,12 +329,13 @@ if __name__ == "__main__":
             voxel_batch = voxel_batch.to(configuration.DEVICE)
 
             # Generate noise
-            batch_size = local_batch.num_graphs
             program_noise = torch.randn(local_batch.num_nodes, configuration.PROGRAM_NOISE_DIM).to(configuration.DEVICE)
             voxel_noise = torch.randn(voxel_batch.num_nodes, configuration.VOXEL_NOISE_DIM).to(configuration.DEVICE)
 
             # Forward pass
-            voxel_features, attention_weights = generator(local_batch, voxel_batch, program_noise, voxel_noise)
+            v, label_hard, label_soft = generator(local_batch, voxel_batch, program_noise, voxel_noise)
+
+            discriminator(voxel_batch, label_hard)
 
             # Loss computation and backward pass would go here
             # ...
