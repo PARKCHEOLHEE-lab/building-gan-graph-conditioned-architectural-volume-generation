@@ -1,4 +1,7 @@
 import os
+import torch
+import random
+import numpy as np
 
 
 class ProgramMap:
@@ -54,12 +57,51 @@ class ModelConfiguration:
     PROGRAM_MESSAGE_PASSING_STEPS = 5
     VOXEL_MESSAGE_PASSING_STEPS = 12
 
+    NUM_CLASSES = 6
+    BATCH_SIZE = 8
+
     LEARNING_RATE_GENERATOR = 0.0002
     LEARNING_RATE_DISCRIMINATOR = 0.0002
+    LAMBDA = 10
 
     DEVICE = "cuda"
 
 
 class Configuration(ProgramMap, DataConfiguration, ModelConfiguration):
+    """Configuration for the plan generator"""
+
     def __init__(self):
         pass
+
+    def to_dict(self):
+        raw_config = {**vars(Configuration), **vars(ModelConfiguration), **vars(DataConfiguration)}
+        config = {}
+        for key, value in raw_config.items():
+            if not key.startswith("__") and not callable(value):
+                config[key] = value
+
+        return config
+
+    LOG_DIR = os.path.abspath(os.path.join(__file__, "../../runs"))
+
+    @staticmethod
+    def set_seed(seed: int = ModelConfiguration.SEED):
+        torch.manual_seed(seed)
+        torch.cuda.manual_seed(seed)
+        torch.cuda.manual_seed_all(seed)
+        torch.backends.cudnn.deterministic = True
+        torch.backends.cudnn.benchmark = False
+        np.random.seed(seed)
+        random.seed(seed)
+
+        print("CUDA status")
+        print(f"  torch.cuda.is_available(): {torch.cuda.is_available()}")
+        print(f"  DEVICE: {Configuration.DEVICE} \n")
+
+        print("Seeds status:")
+        print(f"  Seeds set for torch        : {torch.initial_seed()}")
+        print(f"  Seeds set for torch on GPU : {torch.cuda.initial_seed()}")
+        print(f"  Seeds set for numpy        : {seed}")
+        print(f"  Seeds set for random       : {seed} \n")
+
+        Configuration.SEED = seed
