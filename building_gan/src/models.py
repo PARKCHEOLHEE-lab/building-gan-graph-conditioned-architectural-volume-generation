@@ -167,17 +167,24 @@ class VoxelGNNBlock(tgnn.MessagePassing):
 
 
 class VoxelGNN(tgnn.MessagePassing):
-    def __init__(self, input_dim: int, hidden_dim: int, noise_dim: int, num_steps: int):
+    def __init__(self, input_dim: int, hidden_dim: int, noise_dim: int, num_steps: int, label_dim: int = 0):
         super().__init__()
 
         self.num_steps = num_steps
         self.mlp_encoder = nn.Sequential(nn.Linear(input_dim + noise_dim, hidden_dim), nn.LeakyReLU())
+
         self.positional_encoder = PositionalEncoder(hidden_dim, 100)
+        self.positional_encoder = PositionalEncoder(hidden_dim, 100)
+
         self.pointer_based_cross_modal_module = PointerBasedCrossModalModule(hidden_dim)
 
         self.layers = nn.ModuleList([VoxelGNNBlock(hidden_dim) for _ in range(num_steps)])
 
-    def forward(self, voxel_graph, x, z, skip_pointer=False):
+        self.label_encoder = None
+        if label_dim > 0:
+            self.label_encoder = nn.Sequential(nn.Linear(label_dim, hidden_dim), nn.LeakyReLU())
+
+    def forward(self, voxel_graph, x, z, label_hard=None, skip_pointer=False):
         # (5) v^0_k MLP^v_{enc}([v_k, z^v_k]) + PE(story_k)
 
         v = voxel_graph.x
@@ -186,6 +193,14 @@ class VoxelGNN(tgnn.MessagePassing):
 
         v = self.mlp_encoder(v)
         v = self.positional_encoder(v, voxel_graph.voxel_level)
+
+        if label_hard is not None:
+            v += self.label_encoder(label_hard)
+
+        mask_soft = None
+        mask_hard = None
+        attention_soft = None
+        attention_hard = None
 
         # [(6), (7), (8), (9), (10), (11), (12)]
         for li, layer in enumerate(self.layers):
@@ -200,12 +215,6 @@ class VoxelGNN(tgnn.MessagePassing):
                 v, mask_soft, mask_hard, attention_soft, attention_hard = self.pointer_based_cross_modal_module(
                     x, v, voxel_graph.cross_edge_index
                 )
-
-        if skip_pointer:
-            mask_soft = None
-            mask_hard = None
-            attention_soft = None
-            attention_hard = None
 
         return v, mask_soft, mask_hard, attention_soft, attention_hard
 
@@ -266,11 +275,14 @@ class Discriminator(nn.Module):
     def __init__(self, voxel_input_dim, configuration):
         super().__init__()
 
-        self.mlp_global = nn.Sequential(
-            nn.Linear(configuration.HIDDEN_DIM, configuration.HIDDEN_DIM),
+        self.mlp_discriminate = nn.Sequential(
+            nn.Linear(configuration.HIDDEN_DIM, configuration.HIDDEN_DIM // 2),
             nn.LeakyReLU(),
-            nn.Linear(configuration.HIDDEN_DIM, 1),
-            nn.Sigmoid(),
+            nn.Linear(configuration.HIDDEN_DIM // 2, configuration.HIDDEN_DIM // 4),
+            nn.LeakyReLU(),
+            nn.Linear(configuration.HIDDEN_DIM // 4, configuration.HIDDEN_DIM // 8),
+            nn.LeakyReLU(),
+            nn.Linear(configuration.HIDDEN_DIM // 8, 1),
         )
 
         self.voxel_gnn = VoxelGNN(
@@ -278,14 +290,87 @@ class Discriminator(nn.Module):
             hidden_dim=configuration.HIDDEN_DIM,
             noise_dim=0,
             num_steps=configuration.VOXEL_MESSAGE_PASSING_STEPS,
+            label_dim=configuration.NUM_CLASSES,
         )
 
         self.to(configuration.DEVICE)
 
     def forward(self, voxel_graph, label_hard):
-        v, *_ = self.voxel_gnn(voxel_graph, None, None, skip_pointer=True)
+        v, *_ = self.voxel_gnn(voxel_graph, None, None, label_hard=label_hard, skip_pointer=True)
+        v = tgnn.global_max_pool(v.cpu(), voxel_graph.batch.cpu())
+        v = v.to(label_hard.device)
 
-        return self.mlp_global(v)
+        return self.mlp_discriminate(v).mean()
+
+
+class Trainer:
+    def __init__(
+        self, generator, discriminator, dataloader, optimizer_generator, optimizer_discriminator, configuration
+    ):
+        self.generator = generator
+        self.discriminator = discriminator
+        self.dataloader = dataloader
+        self.optimizer_generator = optimizer_generator
+        self.optimizer_discriminator = optimizer_discriminator
+        self.configuration = configuration
+
+    def compute_gradient_penalty(self, real_data, fake_data):
+        e = torch.rand(self.configuration.BATCH_SIZE, 1).to(self.configuration.DEVICE)
+        interpolated = (e * real_data + ((1 - e) * fake_data)).requires_grad_(True).to(self.configuration.DEVICE)
+        d_interpolated = self.discriminator(interpolated)
+
+        gradients = torch.autograd.grad(
+            outputs=d_interpolated,
+            inputs=interpolated,
+            grad_outputs=torch.ones_like(d_interpolated).to(self.configuration.DEVICE),
+            create_graph=True,
+            retain_graph=True,
+            only_inputs=True,
+        )[0]
+
+        gradients = gradients.view(self.configuration.BATCH_SIZE, -1)
+        gradients_norm = torch.sqrt(torch.sum(gradients**2, dim=1) + 1e-12)
+        gradient_penalty = self.configuration.LAMBDA * ((gradients_norm - 1) ** 2).mean()
+
+        return gradient_penalty
+
+    def _train_discriminator(self):
+        return
+
+    def _train_generator(self):
+        return
+
+    def train(self):
+        for epoch in range(self.configuration.EPOCHS):
+            for local_batch, voxel_batch in self.dataloader:
+                optimizer_generator.zero_grad()
+                optimizer_discriminator.zero_grad()
+
+                local_batch = local_batch.to(self.configuration.DEVICE)
+                voxel_batch = voxel_batch.to(self.configuration.DEVICE)
+
+                # Generate noise
+                program_noise = torch.randn(local_batch.num_nodes, self.configuration.PROGRAM_NOISE_DIM).to(
+                    self.configuration.DEVICE
+                )
+
+                voxel_noise = torch.randn(voxel_batch.num_nodes, self.configuration.VOXEL_NOISE_DIM).to(
+                    self.configuration.DEVICE
+                )
+
+                # Forward pass
+                v, label_hard, label_soft = self.generator(local_batch, voxel_batch, program_noise, voxel_noise)
+
+                d_loss_real = self.discriminator(voxel_batch, label_hard)
+                d_loss_fake = self.discriminator(v.detach(), label_hard)
+
+                gradient_penalty = self.compute_gradient_penalty(voxel_batch, v)
+                d_loss = d_loss_real + d_loss_fake + gradient_penalty
+
+                d_loss.backward()
+                optimizer_discriminator.step()
+
+        return
 
 
 if __name__ == "__main__":
@@ -305,7 +390,7 @@ if __name__ == "__main__":
     dataset = GraphDataset(configuration=configuration, slicer=128)
     dataloader = DataLoader(
         dataset,
-        batch_size=8,
+        batch_size=configuration.BATCH_SIZE,
         shuffle=True,
         num_workers=configuration.NUM_WORKERS,
         collate_fn=GraphDataset.collate_fn,
@@ -323,19 +408,13 @@ if __name__ == "__main__":
     optimizer_generator = torch.optim.Adam(generator.parameters(), lr=configuration.LEARNING_RATE_GENERATOR)
     optimizer_discriminator = torch.optim.Adam(discriminator.parameters(), lr=configuration.LEARNING_RATE_DISCRIMINATOR)
 
-    for epoch in range(configuration.EPOCHS):
-        for local_batch, voxel_batch in dataloader:
-            local_batch = local_batch.to(configuration.DEVICE)
-            voxel_batch = voxel_batch.to(configuration.DEVICE)
+    trainer = Trainer(
+        generator=generator,
+        discriminator=discriminator,
+        dataloader=dataloader,
+        optimizer_generator=optimizer_generator,
+        optimizer_discriminator=optimizer_discriminator,
+        configuration=configuration,
+    )
 
-            # Generate noise
-            program_noise = torch.randn(local_batch.num_nodes, configuration.PROGRAM_NOISE_DIM).to(configuration.DEVICE)
-            voxel_noise = torch.randn(voxel_batch.num_nodes, configuration.VOXEL_NOISE_DIM).to(configuration.DEVICE)
-
-            # Forward pass
-            v, label_hard, label_soft = generator(local_batch, voxel_batch, program_noise, voxel_noise)
-
-            discriminator(voxel_batch, label_hard)
-
-            # Loss computation and backward pass would go here
-            # ...
+    trainer.train()
