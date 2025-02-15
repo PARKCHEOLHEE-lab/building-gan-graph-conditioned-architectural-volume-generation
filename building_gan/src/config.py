@@ -3,6 +3,8 @@ import torch
 import random
 import numpy as np
 
+from typing import List
+
 
 class ProgramMap:
     VOID = -1
@@ -86,8 +88,17 @@ class Configuration(ProgramMap, DataConfiguration, ModelConfiguration):
     def __init__(self):
         pass
 
-    def to_dict(self):
-        raw_config = {**vars(ProgramMap), **vars(DataConfiguration), **vars(ModelConfiguration)}
+    def to_dict(self, class_name: List[str] = ["ProgramMap", "DataConfiguration", "ModelConfiguration"]):
+        config_dict = {
+            "ProgramMap": ProgramMap,
+            "DataConfiguration": DataConfiguration,
+            "ModelConfiguration": ModelConfiguration,
+        }
+
+        raw_config = {}
+        for class_name in class_name:
+            raw_config.update(vars(config_dict[class_name]))
+
         config = {}
         for key, value in raw_config.items():
             if not key.startswith("__") and not callable(value):
