@@ -59,7 +59,11 @@ class PointerBasedCrossModalModule(nn.Module):
 
         self.mlp_program = nn.Linear(hidden_dim, hidden_dim)
         self.mlp_voxel = nn.Linear(hidden_dim, hidden_dim)
-        self.mlp_mask = nn.Sequential(nn.Linear(hidden_dim, hidden_dim), nn.LeakyReLU(), nn.Linear(hidden_dim, 2))
+        self.mlp_mask = nn.Sequential(
+            nn.Linear(hidden_dim, hidden_dim),
+            nn.LeakyReLU(),
+            nn.Linear(hidden_dim, 2),
+        )
         self.gumbel_softmax = GumbelSoftmax()
         self.theta = nn.Parameter(torch.Tensor(hidden_dim, 1))
         nn.init.xavier_normal_(self.theta)
@@ -98,9 +102,15 @@ class ProgramGNNBlock(tgnn.MessagePassing):
     def __init__(self, hidden_dim: int):
         super().__init__(aggr="mean")
 
-        self.mlp_message = nn.Sequential(nn.Linear(hidden_dim * 2, hidden_dim), nn.LeakyReLU())
+        self.mlp_message = nn.Sequential(
+            nn.Linear(hidden_dim * 2, hidden_dim),
+            nn.LeakyReLU(),
+        )
 
-        self.mlp_update = nn.Sequential(nn.Linear(hidden_dim * 3, hidden_dim), nn.LeakyReLU())
+        self.mlp_update = nn.Sequential(
+            nn.Linear(hidden_dim * 3, hidden_dim),
+            nn.LeakyReLU(),
+        )
 
     def forward(self, x, edge_index, node_cluster, node_ratio):
         return self.propagate(edge_index, x=x, node_cluster=node_cluster, node_ratio=node_ratio)
@@ -129,7 +139,11 @@ class ProgramGNN(nn.Module):
         super().__init__()
 
         self.num_steps = num_steps
-        self.mlp_encoder = nn.Sequential(nn.Linear(input_dim + noise_dim, hidden_dim), nn.LeakyReLU())
+
+        self.mlp_encoder = nn.Sequential(
+            nn.Linear(input_dim + noise_dim, hidden_dim),
+            nn.LeakyReLU(),
+        )
 
         self.layers = nn.ModuleList([ProgramGNNBlock(hidden_dim) for _ in range(num_steps)])
 
@@ -150,9 +164,15 @@ class VoxelGNNBlock(tgnn.MessagePassing):
     def __init__(self, hidden_dim):
         super().__init__(aggr="sum")
 
-        self.mlp_message = nn.Sequential(nn.Linear(3 * hidden_dim, hidden_dim), nn.LeakyReLU())
+        self.mlp_message = nn.Sequential(
+            nn.Linear(3 * hidden_dim, hidden_dim),
+            nn.LeakyReLU(),
+        )
 
-        self.mlp_update = nn.Sequential(nn.Linear(2 * hidden_dim, hidden_dim), nn.LeakyReLU())
+        self.mlp_update = nn.Sequential(
+            nn.Linear(2 * hidden_dim, hidden_dim),
+            nn.LeakyReLU(),
+        )
 
     def forward(self, v, edge_index, pos):
         return self.propagate(edge_index, v=v, pos=pos)
@@ -171,7 +191,11 @@ class VoxelGNN(tgnn.MessagePassing):
         super().__init__()
 
         self.num_steps = num_steps
-        self.mlp_encoder = nn.Sequential(nn.Linear(input_dim + noise_dim, hidden_dim), nn.LeakyReLU())
+
+        self.mlp_encoder = nn.Sequential(
+            nn.Linear(input_dim + noise_dim, hidden_dim),
+            nn.LeakyReLU(),
+        )
 
         self.positional_encoder = PositionalEncoder(hidden_dim, 100)
         self.positional_encoder = PositionalEncoder(hidden_dim, 100)
