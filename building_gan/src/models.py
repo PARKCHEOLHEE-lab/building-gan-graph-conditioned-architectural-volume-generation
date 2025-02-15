@@ -274,7 +274,7 @@ class Generator(nn.Module):
 
         return label_hard
 
-    def forward(self, local_graph, voxel_graph, program_noise, voxel_noise):
+    def forward(self, local_graph, voxel_graph, program_noise, voxel_noise, onehot_to_type=False):
         # computes equations (1), (2), (3), (4)
         x = self.program_gnn(local_graph, program_noise)
 
@@ -285,7 +285,17 @@ class Generator(nn.Module):
             voxel_graph.cross_edge_index, local_graph.types_onehot, attention_hard, mask_hard
         )
 
+        if onehot_to_type:
+            return self.onehot_to_type(label_hard)
+
         return label_hard
+
+    def onehot_to_type(self, label_hard):
+        voxel_types = torch.zeros(label_hard.shape[0], 1) - 1
+        voxel_types = voxel_types.to(label_hard.device)
+        return torch.where(
+            (label_hard.sum(dim=1) != 0).unsqueeze(1), label_hard.argmax(dim=1, keepdim=True), voxel_types
+        )
 
 
 class Discriminator(nn.Module):
