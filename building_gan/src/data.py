@@ -4,6 +4,7 @@ import json
 import torch
 
 from tqdm import tqdm
+from torch.utils.data import DataLoader, random_split
 from torch_geometric.data import Data, Dataset, Batch
 
 if os.path.abspath(os.path.join(os.path.dirname(__file__), "../../")) in sys.path:
@@ -29,6 +30,7 @@ class LocalGraphData:
             dim=1,
         )
 
+        self.data_number = local_graph_data["data_number"]
         self.local_graph_types_onehot = local_graph_types_onehot
         self.edge_index = local_graph_data["local_graph_edge_indices"]
         self.local_graph_type_ratio_per_node = local_graph_type_ratio_per_node
@@ -37,9 +39,9 @@ class LocalGraphData:
 
 class VoxelGraphData:
     def __init__(self, voxel_graph_data: dict):
-        voxel_graph_types = voxel_graph_data["voxel_graph_types"]
+        voxel_graph_types_onehot = voxel_graph_data["voxel_graph_types_onehot"]
         voxel_graph_features = voxel_graph_data["voxel_graph_features"]
-        voxel_graph_far_per_node = torch.zeros(voxel_graph_types.shape[0], 1) + voxel_graph_data["far"]
+        voxel_graph_far_per_node = torch.zeros(voxel_graph_types_onehot.shape[0], 1) + voxel_graph_data["far"]
         voxel_graph_floor_levels_normalized = voxel_graph_data["voxel_graph_floor_levels_normalized"].unsqueeze(0).t()
 
         self.x = torch.cat(
@@ -51,13 +53,15 @@ class VoxelGraphData:
             dim=1,
         )
 
+        self.data_number = voxel_graph_data["data_number"]
+        self.voxel_graph_types_onehot = voxel_graph_types_onehot
         self.edge_index = voxel_graph_data["voxel_graph_edge_indices"]
         self.voxel_and_local_cross_edge_indices = voxel_graph_data["voxel_and_local_cross_edge_indices"]
         self.voxel_graph_floor_levels = voxel_graph_data["voxel_graph_floor_levels"]
 
 
 class GraphDataset(Dataset):
-    def __init__(self, configuration: Configuration, slicer: int = 1e10):
+    def __init__(self, configuration: Configuration):
         super().__init__()
         self.configuration = configuration
 
@@ -65,13 +69,13 @@ class GraphDataset(Dataset):
             os.path.join(self.configuration.SAVE_DATA_PATH, d)
             for d in os.listdir(self.configuration.SAVE_DATA_PATH)
             if d.endswith(configuration.LOCAL_DATA_SUFFIX)
-        ][:slicer]
+        ][: configuration.DATA_SLICER]
 
         self.voxel_graph_data_files = [
             os.path.join(self.configuration.SAVE_DATA_PATH, d)
             for d in os.listdir(self.configuration.SAVE_DATA_PATH)
             if d.endswith(configuration.VOXEL_DATA_SUFFIX)
-        ][:slicer]
+        ][: configuration.DATA_SLICER]
 
         assert len(self.local_graph_data_files) == len(self.voxel_graph_data_files)
 
@@ -86,6 +90,7 @@ class GraphDataset(Dataset):
                     node_cluster=local_graph.local_graph_node_cluster,
                     node_ratio=local_graph.local_graph_type_ratio_per_node,
                     types_onehot=local_graph.local_graph_types_onehot,
+                    data_number=local_graph.data_number,
                 )
             )
 
@@ -96,6 +101,8 @@ class GraphDataset(Dataset):
                     edge_index=voxel_graph.edge_index,
                     cross_edge_index=voxel_graph.voxel_and_local_cross_edge_indices,
                     voxel_level=voxel_graph.voxel_graph_floor_levels,
+                    types_onehot=voxel_graph.voxel_graph_types_onehot,
+                    data_number=voxel_graph.data_number,
                 )
             )
 
@@ -136,6 +143,46 @@ class GraphDataset(Dataset):
         return local_batch, voxel_batch
 
 
+class GraphDataLoaders:
+    def __init__(self, configuration: Configuration):
+        self.configuration = configuration
+        self.dataset, self.train_dataloader, self.validation_dataloader, self.test_dataloader = self._get_loaders()
+
+    def _get_loaders(self):
+        dataset = GraphDataset(configuration=self.configuration)
+
+        train_dataset, validation_dataset, test_dataset = random_split(dataset, self.configuration.SPLIT_RATIOS)
+
+        train_dataloader = DataLoader(
+            train_dataset,
+            batch_size=self.configuration.BATCH_SIZE,
+            num_workers=self.configuration.NUM_WORKERS,
+            shuffle=True,
+            drop_last=True,
+            collate_fn=GraphDataset.collate_fn,
+        )
+
+        validation_dataloader = DataLoader(
+            validation_dataset,
+            batch_size=self.configuration.BATCH_SIZE,
+            num_workers=self.configuration.NUM_WORKERS,
+            shuffle=True,
+            drop_last=True,
+            collate_fn=GraphDataset.collate_fn,
+        )
+
+        test_dataloader = DataLoader(
+            test_dataset,
+            batch_size=self.configuration.BATCH_SIZE,
+            num_workers=self.configuration.NUM_WORKERS,
+            shuffle=True,
+            drop_last=True,
+            collate_fn=GraphDataset.collate_fn,
+        )
+
+        return dataset, train_dataloader, validation_dataloader, test_dataloader
+
+
 class DataCreatorHelper:
     @staticmethod
     def process_data(
@@ -143,6 +190,7 @@ class DataCreatorHelper:
         local_graph_data: dict,
         voxel_graph_data: dict,
         configuration: Configuration,
+        data_number: str,
     ):
         # processes local graph data
         local_graph_unique_indices = {}
@@ -192,7 +240,7 @@ class DataCreatorHelper:
         # process voxel graph data
         voxel_graph_unique_indices = {}
         voxel_graph_features = []
-        voxel_graph_types = []
+        voxel_graph_types_onehot = []
         voxel_graph_floor_levels = []
 
         voxel_graph_nodes = voxel_graph_data["voxel_node"]
@@ -210,9 +258,9 @@ class DataCreatorHelper:
             )
 
             if voxel_node["type"] < 0:
-                voxel_graph_types.append([0] * configuration.NUM_CLASSES)
+                voxel_graph_types_onehot.append([0] * configuration.NUM_CLASSES)
             else:
-                voxel_graph_types.append(
+                voxel_graph_types_onehot.append(
                     torch.nn.functional.one_hot(
                         torch.tensor(voxel_node["type"]), num_classes=configuration.NUM_CLASSES
                     ).tolist()
@@ -230,12 +278,12 @@ class DataCreatorHelper:
 
         voxel_graph_edge_indices = voxel_graph_adjacency_matrix.nonzero().t()
 
-        voxel_graph_types = torch.tensor(voxel_graph_types)
+        voxel_graph_types_onehot = torch.tensor(voxel_graph_types_onehot)
         voxel_graph_floor_levels = torch.tensor(voxel_graph_floor_levels)
         voxel_graph_floor_levels_normalized = voxel_graph_floor_levels / configuration.FLOOR_LEVEL_NORM_FACTOR
         voxel_graph_features = torch.tensor(voxel_graph_features)
 
-        assert len(voxel_graph_types) == len(voxel_graph_nodes)
+        assert len(voxel_graph_types_onehot) == len(voxel_graph_nodes)
         assert len(voxel_graph_floor_levels) == len(voxel_graph_nodes)
         assert len(voxel_graph_features) == len(voxel_graph_nodes)
 
@@ -270,16 +318,18 @@ class DataCreatorHelper:
             "local_graph_types_onehot": local_graph_types_onehot,
             "local_graph_floor_levels_normalized": local_graph_floor_levels_normalized,
             "local_graph_edge_indices": local_graph_edge_indices,
+            "data_number": data_number,
         }
 
         voxel_graph_data = voxel_graph_data = {
             "far": far,
-            "voxel_graph_types": voxel_graph_types,
+            "voxel_graph_types_onehot": voxel_graph_types_onehot,
             "voxel_graph_floor_levels": voxel_graph_floor_levels,
             "voxel_graph_floor_levels_normalized": voxel_graph_floor_levels_normalized,
             "voxel_graph_features": voxel_graph_features,
             "voxel_graph_edge_indices": voxel_graph_edge_indices,
             "voxel_and_local_cross_edge_indices": voxel_and_local_cross_edge_indices,
+            "data_number": data_number,
         }
 
         return LocalGraphData(local_graph_data), VoxelGraphData(voxel_graph_data)
@@ -326,6 +376,7 @@ class DataCreator(DataCreatorHelper):
                 local_graph_data,
                 voxel_graph_data,
                 self.configuration,
+                data_number,
             )
 
             processed_data_name_voxel = f"{data_number}{self.configuration.VOXEL_DATA_SUFFIX}"
