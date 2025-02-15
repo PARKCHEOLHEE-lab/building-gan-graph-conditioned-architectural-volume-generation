@@ -77,6 +77,8 @@ class ModelConfiguration:
 
     DEVICE = "cuda"
 
+    LOG_DIR = os.path.abspath(os.path.join(__file__, "../../runs"))
+
 
 class Configuration(ProgramMap, DataConfiguration, ModelConfiguration):
     """Configuration for the plan generator"""
@@ -85,15 +87,13 @@ class Configuration(ProgramMap, DataConfiguration, ModelConfiguration):
         pass
 
     def to_dict(self):
-        raw_config = {**vars(Configuration), **vars(ModelConfiguration), **vars(DataConfiguration)}
+        raw_config = {**vars(ProgramMap), **vars(DataConfiguration), **vars(ModelConfiguration)}
         config = {}
         for key, value in raw_config.items():
             if not key.startswith("__") and not callable(value):
                 config[key] = value
 
         return config
-
-    LOG_DIR = os.path.abspath(os.path.join(__file__, "../../runs"))
 
     @staticmethod
     def set_seed(seed: int = ModelConfiguration.SEED):
