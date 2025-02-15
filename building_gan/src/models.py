@@ -91,7 +91,7 @@ class PointerBasedCrossModalModule(nn.Module):
         summed = tgutils.scatter(src=x_selected * attention_soft, index=cross_edge_index[1], reduce="sum")
         v = v + mask_soft * summed
 
-        return v, mask_soft, mask_hard, attention_soft, attention_hard
+        return v, mask_hard, attention_hard
 
 
 class ProgramGNNBlock(tgnn.MessagePassing):
@@ -184,7 +184,7 @@ class VoxelGNN(tgnn.MessagePassing):
         if label_dim > 0:
             self.label_encoder = nn.Sequential(nn.Linear(label_dim, hidden_dim), nn.LeakyReLU())
 
-    def forward(self, voxel_graph, x, z, label_hard=None, skip_pointer=False):
+    def forward(self, voxel_graph, x, z, label_onehot=None, skip_pointer=False):
         # (5) v^0_k MLP^v_{enc}([v_k, z^v_k]) + PE(story_k)
 
         v = voxel_graph.x
@@ -194,12 +194,10 @@ class VoxelGNN(tgnn.MessagePassing):
         v = self.mlp_encoder(v)
         v = self.positional_encoder(v, voxel_graph.voxel_level)
 
-        if label_hard is not None:
-            v += self.label_encoder(label_hard)
+        if label_onehot is not None:
+            v += self.label_encoder(label_onehot)
 
-        mask_soft = None
         mask_hard = None
-        attention_soft = None
         attention_hard = None
 
         # [(6), (7), (8), (9), (10), (11), (12)]
@@ -212,11 +210,9 @@ class VoxelGNN(tgnn.MessagePassing):
 
             # "baseline model uses 12 steps of message passing and call the pointer module once every 2 steps"
             if (li + 1) % 2 == 0 and not skip_pointer:
-                v, mask_soft, mask_hard, attention_soft, attention_hard = self.pointer_based_cross_modal_module(
-                    x, v, voxel_graph.cross_edge_index
-                )
+                v, mask_hard, attention_hard = self.pointer_based_cross_modal_module(x, v, voxel_graph.cross_edge_index)
 
-        return v, mask_soft, mask_hard, attention_soft, attention_hard
+        return v, mask_hard, attention_hard
 
 
 class Generator(nn.Module):
@@ -246,29 +242,26 @@ class Generator(nn.Module):
 
         self.to(configuration.DEVICE)
 
-    def construct_output(self, cross_edge_index, types_onehot, attention_soft, attention_hard, mask_hard, mask_soft):
+    def get_label_hard(self, cross_edge_index, types_onehot, attention_hard, mask_hard):
         types_onehot_selected = types_onehot[cross_edge_index[0]]
 
         label_hard = tgutils.scatter(attention_hard * types_onehot_selected, index=cross_edge_index[1], reduce="sum")
         label_hard *= mask_hard
 
-        label_soft = tgutils.scatter(attention_soft * types_onehot_selected, index=cross_edge_index[1], reduce="sum")
-        label_soft *= mask_soft
-
-        return label_hard, label_soft
+        return label_hard
 
     def forward(self, local_graph, voxel_graph, program_noise, voxel_noise):
         # computes equations (1), (2), (3), (4)
         x = self.program_gnn(local_graph, program_noise)
 
         # computes equations (5), (6), (7), (8), (9), (10), (11), (12)
-        v, mask_soft, mask_hard, attention_soft, attention_hard = self.voxel_gnn(voxel_graph, x, voxel_noise)
+        _, mask_hard, attention_hard = self.voxel_gnn(voxel_graph, x, voxel_noise)
 
-        label_hard, label_soft = self.construct_output(
-            voxel_graph.cross_edge_index, local_graph.types_onehot, attention_soft, attention_hard, mask_hard, mask_soft
+        label_hard = self.get_label_hard(
+            voxel_graph.cross_edge_index, local_graph.types_onehot, attention_hard, mask_hard
         )
 
-        return v, label_hard, label_soft
+        return label_hard
 
 
 class Discriminator(nn.Module):
@@ -295,126 +288,9 @@ class Discriminator(nn.Module):
 
         self.to(configuration.DEVICE)
 
-    def forward(self, voxel_graph, label_hard):
-        v, *_ = self.voxel_gnn(voxel_graph, None, None, label_hard=label_hard, skip_pointer=True)
+    def forward(self, voxel_graph, label_onehot):
+        v, *_ = self.voxel_gnn(voxel_graph, None, None, label_onehot=label_onehot.float(), skip_pointer=True)
         v = tgnn.global_max_pool(v.cpu(), voxel_graph.batch.cpu())
-        v = v.to(label_hard.device)
+        v = v.to(label_onehot.device)
 
         return self.mlp_discriminate(v).mean()
-
-
-class Trainer:
-    def __init__(
-        self, generator, discriminator, dataloader, optimizer_generator, optimizer_discriminator, configuration
-    ):
-        self.generator = generator
-        self.discriminator = discriminator
-        self.dataloader = dataloader
-        self.optimizer_generator = optimizer_generator
-        self.optimizer_discriminator = optimizer_discriminator
-        self.configuration = configuration
-
-    def compute_gradient_penalty(self, real_data, fake_data):
-        e = torch.rand(self.configuration.BATCH_SIZE, 1).to(self.configuration.DEVICE)
-        interpolated = (e * real_data + ((1 - e) * fake_data)).requires_grad_(True).to(self.configuration.DEVICE)
-        d_interpolated = self.discriminator(interpolated)
-
-        gradients = torch.autograd.grad(
-            outputs=d_interpolated,
-            inputs=interpolated,
-            grad_outputs=torch.ones_like(d_interpolated).to(self.configuration.DEVICE),
-            create_graph=True,
-            retain_graph=True,
-            only_inputs=True,
-        )[0]
-
-        gradients = gradients.view(self.configuration.BATCH_SIZE, -1)
-        gradients_norm = torch.sqrt(torch.sum(gradients**2, dim=1) + 1e-12)
-        gradient_penalty = self.configuration.LAMBDA * ((gradients_norm - 1) ** 2).mean()
-
-        return gradient_penalty
-
-    def _train_discriminator(self):
-        return
-
-    def _train_generator(self):
-        return
-
-    def train(self):
-        for epoch in range(self.configuration.EPOCHS):
-            for local_batch, voxel_batch in self.dataloader:
-                optimizer_generator.zero_grad()
-                optimizer_discriminator.zero_grad()
-
-                local_batch = local_batch.to(self.configuration.DEVICE)
-                voxel_batch = voxel_batch.to(self.configuration.DEVICE)
-
-                # Generate noise
-                program_noise = torch.randn(local_batch.num_nodes, self.configuration.PROGRAM_NOISE_DIM).to(
-                    self.configuration.DEVICE
-                )
-
-                voxel_noise = torch.randn(voxel_batch.num_nodes, self.configuration.VOXEL_NOISE_DIM).to(
-                    self.configuration.DEVICE
-                )
-
-                # Forward pass
-                v, label_hard, label_soft = self.generator(local_batch, voxel_batch, program_noise, voxel_noise)
-
-                d_loss_real = self.discriminator(voxel_batch, label_hard)
-                d_loss_fake = self.discriminator(v.detach(), label_hard)
-
-                gradient_penalty = self.compute_gradient_penalty(voxel_batch, v)
-                d_loss = d_loss_real + d_loss_fake + gradient_penalty
-
-                d_loss.backward()
-                optimizer_discriminator.step()
-
-        return
-
-
-if __name__ == "__main__":
-    import os
-    import sys
-
-    sys.path.append(os.path.join(os.path.dirname(__file__), "../../"))
-
-    from torch.utils.data import DataLoader
-    from building_gan.src.data import GraphDataset
-    from building_gan.src.config import Configuration
-
-    torch.manual_seed(777)
-    torch.cuda.manual_seed_all(777)
-
-    configuration = Configuration()
-    dataset = GraphDataset(configuration=configuration, slicer=128)
-    dataloader = DataLoader(
-        dataset,
-        batch_size=configuration.BATCH_SIZE,
-        shuffle=True,
-        num_workers=configuration.NUM_WORKERS,
-        collate_fn=GraphDataset.collate_fn,
-    )
-
-    # Training loop
-    generator = Generator(
-        program_input_dim=dataloader.dataset[0][0].num_features,
-        voxel_input_dim=dataloader.dataset[0][1].num_features,
-        configuration=configuration,
-    )
-
-    discriminator = Discriminator(voxel_input_dim=dataloader.dataset[0][1].num_features, configuration=configuration)
-
-    optimizer_generator = torch.optim.Adam(generator.parameters(), lr=configuration.LEARNING_RATE_GENERATOR)
-    optimizer_discriminator = torch.optim.Adam(discriminator.parameters(), lr=configuration.LEARNING_RATE_DISCRIMINATOR)
-
-    trainer = Trainer(
-        generator=generator,
-        discriminator=discriminator,
-        dataloader=dataloader,
-        optimizer_generator=optimizer_generator,
-        optimizer_discriminator=optimizer_discriminator,
-        configuration=configuration,
-    )
-
-    trainer.train()
