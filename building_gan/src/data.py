@@ -33,8 +33,12 @@ class LocalGraphData:
         self.data_number = local_graph_data["data_number"]
         self.local_graph_types_onehot = local_graph_types_onehot
         self.edge_index = local_graph_data["local_graph_edge_indices"]
+        self.local_graph_floor_levels = local_graph_data["local_graph_floor_levels"]
         self.local_graph_type_ratio_per_node = local_graph_type_ratio_per_node
         self.local_graph_node_cluster = local_graph_data["local_graph_node_cluster"]
+        self.local_graph_center = local_graph_data["local_graph_center"]
+        self.local_graph_types = local_graph_data["local_graph_types"]
+        self.local_graph_type_ids = local_graph_data["local_graph_type_ids"]
 
 
 class VoxelGraphData:
@@ -54,10 +58,14 @@ class VoxelGraphData:
         )
 
         self.data_number = voxel_graph_data["data_number"]
+        self.voxel_graph_types = voxel_graph_data["voxel_graph_types"]
         self.voxel_graph_types_onehot = voxel_graph_types_onehot
         self.edge_index = voxel_graph_data["voxel_graph_edge_indices"]
         self.voxel_and_local_cross_edge_indices = voxel_graph_data["voxel_and_local_cross_edge_indices"]
         self.voxel_graph_floor_levels = voxel_graph_data["voxel_graph_floor_levels"]
+        self.voxel_graph_node_coordinate = voxel_graph_data["voxel_graph_node_coordinate"]
+        self.voxel_graph_node_dimension = voxel_graph_data["voxel_graph_node_dimension"]
+        self.voxel_graph_location = voxel_graph_data["voxel_graph_location"]
 
 
 class GraphDataset(Dataset):
@@ -90,7 +98,11 @@ class GraphDataset(Dataset):
                     node_cluster=local_graph.local_graph_node_cluster,
                     node_ratio=local_graph.local_graph_type_ratio_per_node,
                     types_onehot=local_graph.local_graph_types_onehot,
+                    center=local_graph.local_graph_center,
+                    type=local_graph.local_graph_types,
+                    type_id=local_graph.local_graph_type_ids,
                     data_number=local_graph.data_number,
+                    floor=local_graph.local_graph_floor_levels,
                 )
             )
 
@@ -101,7 +113,11 @@ class GraphDataset(Dataset):
                     edge_index=voxel_graph.edge_index,
                     cross_edge_index=voxel_graph.voxel_and_local_cross_edge_indices,
                     voxel_level=voxel_graph.voxel_graph_floor_levels,
+                    type=voxel_graph.voxel_graph_types,
                     types_onehot=voxel_graph.voxel_graph_types_onehot,
+                    coordinate=voxel_graph.voxel_graph_node_coordinate,
+                    dimension=voxel_graph.voxel_graph_node_dimension,
+                    location=voxel_graph.voxel_graph_location,
                     data_number=voxel_graph.data_number,
                 )
             )
@@ -146,6 +162,7 @@ class GraphDataset(Dataset):
 class GraphDataLoaders:
     def __init__(self, configuration: Configuration):
         self.configuration = configuration
+        self.sanity_checking = self.configuration.SANITY_CHECKING
         self.dataset, self.train_dataloader, self.validation_dataloader, self.test_dataloader = self._get_loaders()
 
     def _get_loaders(self):
@@ -162,22 +179,30 @@ class GraphDataLoaders:
             collate_fn=GraphDataset.collate_fn,
         )
 
-        validation_dataloader = DataLoader(
-            validation_dataset,
-            batch_size=self.configuration.BATCH_SIZE,
-            num_workers=self.configuration.NUM_WORKERS,
-            shuffle=True,
-            drop_last=True,
-            collate_fn=GraphDataset.collate_fn,
+        validation_dataloader = (
+            DataLoader(
+                validation_dataset,
+                batch_size=self.configuration.BATCH_SIZE,
+                num_workers=self.configuration.NUM_WORKERS,
+                shuffle=True,
+                drop_last=True,
+                collate_fn=GraphDataset.collate_fn,
+            )
+            if not self.sanity_checking
+            else None
         )
 
-        test_dataloader = DataLoader(
-            test_dataset,
-            batch_size=self.configuration.BATCH_SIZE,
-            num_workers=self.configuration.NUM_WORKERS,
-            shuffle=True,
-            drop_last=True,
-            collate_fn=GraphDataset.collate_fn,
+        test_dataloader = (
+            DataLoader(
+                test_dataset,
+                batch_size=self.configuration.BATCH_SIZE,
+                num_workers=self.configuration.NUM_WORKERS,
+                shuffle=True,
+                drop_last=True,
+                collate_fn=GraphDataset.collate_fn,
+            )
+            if not self.sanity_checking
+            else None
         )
 
         return dataset, train_dataloader, validation_dataloader, test_dataloader
@@ -196,6 +221,9 @@ class DataCreatorHelper:
         local_graph_unique_indices = {}
         local_graph_floor_levels = []
         local_graph_node_cluster = []
+        local_graph_center = []
+        local_graph_types = []
+        local_graph_type_ids = []
 
         local_graph_nodes = local_graph_data["node"]
         for ni, local_node in enumerate(local_graph_nodes):
@@ -203,6 +231,9 @@ class DataCreatorHelper:
             local_graph_unique_indices[unique_index] = ni
             local_graph_floor_levels.append(local_node["floor"])
             local_graph_node_cluster.append(local_node["type"])
+            local_graph_center.append(local_node["center"])
+            local_graph_types.append(local_node["type"])
+            local_graph_type_ids.append(local_node["type_id"])
 
         local_graph_types_onehot = torch.nn.functional.one_hot(
             torch.tensor(local_graph_node_cluster), num_classes=configuration.NUM_CLASSES
@@ -211,6 +242,9 @@ class DataCreatorHelper:
         local_graph_node_cluster = torch.tensor(local_graph_node_cluster)
         local_graph_floor_levels = torch.tensor(local_graph_floor_levels)
         local_graph_floor_levels_normalized = local_graph_floor_levels / configuration.FLOOR_LEVEL_NORM_FACTOR
+        local_graph_center = torch.tensor(local_graph_center)
+        local_graph_types = torch.tensor(local_graph_types)
+        local_graph_type_ids = torch.tensor(local_graph_type_ids)
 
         assert len(local_graph_floor_levels) == len(local_graph_nodes)
         assert len(local_graph_types_onehot) == len(local_graph_nodes)
@@ -240,8 +274,12 @@ class DataCreatorHelper:
         # process voxel graph data
         voxel_graph_unique_indices = {}
         voxel_graph_features = []
+        voxel_graph_types = []
         voxel_graph_types_onehot = []
         voxel_graph_floor_levels = []
+        voxel_graph_node_coordinate = []
+        voxel_graph_node_dimension = []
+        voxel_graph_location = []
 
         voxel_graph_nodes = voxel_graph_data["voxel_node"]
         for vni, voxel_node in enumerate(voxel_graph_nodes):
@@ -256,6 +294,11 @@ class DataCreatorHelper:
                     *[d / configuration.NORMALIZATION_FACTOR for d in voxel_node["dimension"]],
                 ]
             )
+
+            voxel_graph_node_coordinate.append(voxel_node["coordinate"])
+            voxel_graph_node_dimension.append(voxel_node["dimension"])
+            voxel_graph_location.append(voxel_node["location"])
+            voxel_graph_types.append(voxel_node["type"])
 
             if voxel_node["type"] < 0:
                 voxel_graph_types_onehot.append([0] * configuration.NUM_CLASSES)
@@ -278,14 +321,22 @@ class DataCreatorHelper:
 
         voxel_graph_edge_indices = voxel_graph_adjacency_matrix.nonzero().t()
 
+        voxel_graph_types = torch.tensor(voxel_graph_types)
         voxel_graph_types_onehot = torch.tensor(voxel_graph_types_onehot)
         voxel_graph_floor_levels = torch.tensor(voxel_graph_floor_levels)
         voxel_graph_floor_levels_normalized = voxel_graph_floor_levels / configuration.FLOOR_LEVEL_NORM_FACTOR
         voxel_graph_features = torch.tensor(voxel_graph_features)
+        voxel_graph_node_coordinate = torch.tensor(voxel_graph_node_coordinate)
+        voxel_graph_node_dimension = torch.tensor(voxel_graph_node_dimension)
+        voxel_graph_location = torch.tensor(voxel_graph_location)
 
+        assert len(voxel_graph_types) == len(voxel_graph_nodes)
         assert len(voxel_graph_types_onehot) == len(voxel_graph_nodes)
         assert len(voxel_graph_floor_levels) == len(voxel_graph_nodes)
         assert len(voxel_graph_features) == len(voxel_graph_nodes)
+        assert len(voxel_graph_node_coordinate) == len(voxel_graph_nodes)
+        assert len(voxel_graph_node_dimension) == len(voxel_graph_nodes)
+        assert len(voxel_graph_location) == len(voxel_graph_nodes)
 
         local_graph_node_indices_per_level = [[] for _ in range(max(local_graph_floor_levels) + 1)]
         for i, floor_level in enumerate(local_graph_floor_levels):
@@ -316,19 +367,27 @@ class DataCreatorHelper:
             "type_ratio": type_ratio,
             "local_graph_node_cluster": local_graph_node_cluster,
             "local_graph_types_onehot": local_graph_types_onehot,
+            "local_graph_floor_levels": local_graph_floor_levels,
             "local_graph_floor_levels_normalized": local_graph_floor_levels_normalized,
             "local_graph_edge_indices": local_graph_edge_indices,
+            "local_graph_center": local_graph_center,
+            "local_graph_types": local_graph_types,
+            "local_graph_type_ids": local_graph_type_ids,
             "data_number": data_number,
         }
 
         voxel_graph_data = voxel_graph_data = {
             "far": far,
+            "voxel_graph_types": voxel_graph_types,
             "voxel_graph_types_onehot": voxel_graph_types_onehot,
             "voxel_graph_floor_levels": voxel_graph_floor_levels,
             "voxel_graph_floor_levels_normalized": voxel_graph_floor_levels_normalized,
             "voxel_graph_features": voxel_graph_features,
             "voxel_graph_edge_indices": voxel_graph_edge_indices,
             "voxel_and_local_cross_edge_indices": voxel_and_local_cross_edge_indices,
+            "voxel_graph_node_coordinate": voxel_graph_node_coordinate,
+            "voxel_graph_node_dimension": voxel_graph_node_dimension,
+            "voxel_graph_location": voxel_graph_location,
             "data_number": data_number,
         }
 
