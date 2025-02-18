@@ -265,7 +265,7 @@ class DataCreatorHelper:
         far = torch.tensor([global_graph_data["far"]])
 
         global_graph_nodes = global_graph_data["global_node"]
-        type_ratio = [0] * len(global_graph_nodes)
+        type_ratio = [0] * configuration.NUM_CLASSES
         for global_node in global_graph_nodes:
             type_ratio[global_node["type"]] = global_node["proportion"]
 
@@ -295,19 +295,25 @@ class DataCreatorHelper:
                 ]
             )
 
+            voxel_node_type = voxel_node["type"]
+            if voxel_node_type == configuration.VOID_OLD:
+                voxel_node_type = configuration.VOID
+            elif voxel_node_type == configuration.NOT_ALLOWED_OLD:
+                voxel_node_type = configuration.NOT_ALLOWED
+
             voxel_graph_node_coordinate.append(voxel_node["coordinate"])
             voxel_graph_node_dimension.append(voxel_node["dimension"])
             voxel_graph_location.append(voxel_node["location"])
-            voxel_graph_types.append(voxel_node["type"])
+            voxel_graph_types.append(voxel_node_type)
 
-            if voxel_node["type"] < 0:
-                voxel_graph_types_onehot.append([0] * configuration.NUM_CLASSES)
-            else:
-                voxel_graph_types_onehot.append(
-                    torch.nn.functional.one_hot(
-                        torch.tensor(voxel_node["type"]), num_classes=configuration.NUM_CLASSES
-                    ).tolist()
-                )
+            # if voxel_node["type"] < 0:
+            #     voxel_graph_types_onehot.append([0] * configuration.NUM_CLASSES)
+            # else:
+            voxel_graph_types_onehot.append(
+                torch.nn.functional.one_hot(
+                    torch.tensor(voxel_node_type), num_classes=configuration.NUM_CLASSES
+                ).tolist()
+            )
 
         # compute voxel graph edge indices
         voxel_graph_adjacency_matrix = torch.zeros(size=(len(voxel_graph_nodes), len(voxel_graph_nodes)))
