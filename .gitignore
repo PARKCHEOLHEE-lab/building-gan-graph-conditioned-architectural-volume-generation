@@ -2,3 +2,5 @@ debugvisualizer/
 building_gan/data/
 
 __pycache__
+
+building_gan/runs/*
