@@ -66,6 +66,8 @@ class VoxelGraphData:
         self.voxel_graph_node_coordinate = voxel_graph_data["voxel_graph_node_coordinate"]
         self.voxel_graph_node_dimension = voxel_graph_data["voxel_graph_node_dimension"]
         self.voxel_graph_location = voxel_graph_data["voxel_graph_location"]
+        self.voxel_graph_node_ratio = voxel_graph_types_onehot * voxel_graph_data["voxel_graph_node_ratio"]
+        self.voxel_graph_node_ratio = self.voxel_graph_node_ratio.max(dim=1)[0].unsqueeze(1)
 
 
 class GraphDataset(Dataset):
@@ -118,6 +120,7 @@ class GraphDataset(Dataset):
                     coordinate=voxel_graph.voxel_graph_node_coordinate,
                     dimension=voxel_graph.voxel_graph_node_dimension,
                     location=voxel_graph.voxel_graph_location,
+                    node_ratio=voxel_graph.voxel_graph_node_ratio,
                     data_number=voxel_graph.data_number,
                 )
             )
@@ -241,7 +244,7 @@ class DataCreatorHelper:
 
         local_graph_node_cluster = torch.tensor(local_graph_node_cluster)
         local_graph_floor_levels = torch.tensor(local_graph_floor_levels)
-        local_graph_floor_levels_normalized = local_graph_floor_levels / configuration.FLOOR_LEVEL_NORM_FACTOR
+        local_graph_floor_levels_normalized = local_graph_floor_levels / configuration.NORMALIZATION_FACTOR
         local_graph_center = torch.tensor(local_graph_center)
         local_graph_types = torch.tensor(local_graph_types)
         local_graph_type_ids = torch.tensor(local_graph_type_ids)
@@ -280,6 +283,7 @@ class DataCreatorHelper:
         voxel_graph_node_coordinate = []
         voxel_graph_node_dimension = []
         voxel_graph_location = []
+        voxel_graph_node_ratio = [0] * configuration.NUM_CLASSES
 
         voxel_graph_nodes = voxel_graph_data["voxel_node"]
         for vni, voxel_node in enumerate(voxel_graph_nodes):
@@ -290,8 +294,9 @@ class DataCreatorHelper:
 
             voxel_graph_features.append(
                 [
-                    *[c / configuration.NORMALIZATION_FACTOR for c in voxel_node["coordinate"]],
-                    *[d / configuration.NORMALIZATION_FACTOR for d in voxel_node["dimension"]],
+                    *[coo / configuration.NORMALIZATION_FACTOR for coo in voxel_node["coordinate"]],
+                    *[dim / configuration.NORMALIZATION_FACTOR for dim in voxel_node["dimension"]],
+                    *[loc / configuration.NORMALIZATION_FACTOR for loc in voxel_node["location"]],
                 ]
             )
 
@@ -301,19 +306,20 @@ class DataCreatorHelper:
             elif voxel_node_type == configuration.NOT_ALLOWED_OLD:
                 voxel_node_type = configuration.NOT_ALLOWED
 
+            voxel_graph_node_ratio[voxel_node_type] += 1
+
             voxel_graph_node_coordinate.append(voxel_node["coordinate"])
             voxel_graph_node_dimension.append(voxel_node["dimension"])
             voxel_graph_location.append(voxel_node["location"])
             voxel_graph_types.append(voxel_node_type)
 
-            # if voxel_node["type"] < 0:
-            #     voxel_graph_types_onehot.append([0] * configuration.NUM_CLASSES)
-            # else:
             voxel_graph_types_onehot.append(
                 torch.nn.functional.one_hot(
                     torch.tensor(voxel_node_type), num_classes=configuration.NUM_CLASSES
                 ).tolist()
             )
+
+        voxel_graph_node_ratio = torch.tensor(voxel_graph_node_ratio) / len(voxel_graph_nodes)
 
         # compute voxel graph edge indices
         voxel_graph_adjacency_matrix = torch.zeros(size=(len(voxel_graph_nodes), len(voxel_graph_nodes)))
@@ -330,7 +336,7 @@ class DataCreatorHelper:
         voxel_graph_types = torch.tensor(voxel_graph_types)
         voxel_graph_types_onehot = torch.tensor(voxel_graph_types_onehot)
         voxel_graph_floor_levels = torch.tensor(voxel_graph_floor_levels)
-        voxel_graph_floor_levels_normalized = voxel_graph_floor_levels / configuration.FLOOR_LEVEL_NORM_FACTOR
+        voxel_graph_floor_levels_normalized = voxel_graph_floor_levels / configuration.NORMALIZATION_FACTOR
         voxel_graph_features = torch.tensor(voxel_graph_features)
         voxel_graph_node_coordinate = torch.tensor(voxel_graph_node_coordinate)
         voxel_graph_node_dimension = torch.tensor(voxel_graph_node_dimension)
@@ -394,6 +400,7 @@ class DataCreatorHelper:
             "voxel_graph_node_coordinate": voxel_graph_node_coordinate,
             "voxel_graph_node_dimension": voxel_graph_node_dimension,
             "voxel_graph_location": voxel_graph_location,
+            "voxel_graph_node_ratio": voxel_graph_node_ratio,
             "data_number": data_number,
         }
 
