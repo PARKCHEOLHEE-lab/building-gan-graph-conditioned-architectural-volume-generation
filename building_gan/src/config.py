@@ -7,8 +7,8 @@ from typing import List
 
 
 class ProgramMap:
-    VOID = -1
-    NOT_ALLOWED = -2
+    VOID_OLD = -1
+    NOT_ALLOWED_OLD = -2
 
     LOBBY_CORRIDOR = 0
     RESTROOM = 1
@@ -16,19 +16,23 @@ class ProgramMap:
     ELEVATOR = 3
     OFFICE = 4
     MECHANICAL_ROOM = 5
+    VOID = 6
+    NOT_ALLOWED = 7
 
     COLORS = {
-        VOID: "gray",
-        NOT_ALLOWED: "white",
+        # VOID: "gray",
+        # NOT_ALLOWED: "white",
         LOBBY_CORRIDOR: "brown",
         RESTROOM: "red",
         STAIRS: "yellow",
         ELEVATOR: "green",
         OFFICE: "blue",
         MECHANICAL_ROOM: "orange",
+        VOID: "gray",
+        NOT_ALLOWED: "white",
     }
 
-    NUM_CLASSES = 6
+    NUM_CLASSES = 8
 
 
 class DataConfiguration:
@@ -40,8 +44,7 @@ class DataConfiguration:
     SAVE_DATA_PATH = os.path.abspath(os.path.join(os.path.dirname(__file__), "../data/6types-processed_data"))
 
     NEGATIVE_SAMPLING_MULTIPLIER = 2
-    NORMALIZATION_FACTOR = 100
-    FLOOR_LEVEL_NORM_FACTOR = 100
+    NORMALIZATION_FACTOR = 50
 
     LOCAL_DATA_SUFFIX = "_local.pt"
     VOXEL_DATA_SUFFIX = "_voxel.pt"
@@ -49,33 +52,33 @@ class DataConfiguration:
 
 class ModelConfiguration:
     NUM_WORKERS = 3
-    EPOCHS = 1000
+    EPOCHS = 3000
     SEED = 777
 
     HIDDEN_DIM = 128
-    PROGRAM_NOISE_DIM = 128
-    VOXEL_NOISE_DIM = 128
+    PROGRAM_NOISE_DIM = 32
+    VOXEL_NOISE_DIM = 32
 
-    PROGRAM_MESSAGE_PASSING_STEPS = 5
+    PROGRAM_MESSAGE_PASSING_STEPS = 4
     VOXEL_MESSAGE_PASSING_STEPS = 12
-
-    N_CRITIC = 5
 
     TRAIN_SPLIT_RATIO = 0.70
     VALIDATION_SPLIT_RATIO = 0.20
     TEST_SPLIT_RATIO = 0.10
     SPLIT_RATIOS = [TRAIN_SPLIT_RATIO, VALIDATION_SPLIT_RATIO, TEST_SPLIT_RATIO]
 
-    DATA_SLICER = int(1e10)
-    BATCH_SIZE = 128
+    DATA_SLICER = 320
+    BATCH_SIZE = 32
     SANITY_CHECKING = True
     if SANITY_CHECKING:
         DATA_SLICER = 1
         BATCH_SIZE = 1
 
+    N_CRITIC = 5
     LEARNING_RATE_GENERATOR = 0.0002
     LEARNING_RATE_DISCRIMINATOR = 0.0002
-    LAMBDA_GP = 10
+    BETAS = (0.5, 0.999)
+    LAMBDA_GP = 10.0
 
     DEVICE = "cuda"
 
