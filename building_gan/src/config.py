@@ -76,7 +76,7 @@ class ModelConfiguration:
 
     N_CRITIC = 5
     LEARNING_RATE_GENERATOR = 0.0002
-    LEARNING_RATE_DISCRIMINATOR = 0.0002
+    LEARNING_RATE_DISCRIMINATOR = 0.0004
     BETAS = (0.5, 0.999)
     LAMBDA_GP = 10.0
 
@@ -85,7 +85,7 @@ class ModelConfiguration:
     LOG_DIR = os.path.abspath(os.path.join(__file__, "../../runs"))
 
     GENERATOR_CONV_TYPE = "GRAPHCONV"
-    GENERATOR_ENCODER_REPEAT = 5
+    GENERATOR_ENCODER_REPEAT = 7
     GENERATOR_HIDDEN_DIM = 128
 
     DISCRIMINATOR_CONV_TYPE = "GATCONV"

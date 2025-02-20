@@ -7,33 +7,40 @@ from typing import Hashable
 from matplotlib.patches import Patch
 from mpl_toolkits.mplot3d.art3d import Poly3DCollection
 from torch_geometric.data import Batch
+from IPython.display import clear_output
 
 if os.path.abspath(os.path.join(os.path.dirname(__file__), "../../")) not in sys.path:
     sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), "../../")))
 
 from building_gan.src.config import Configuration
 from building_gan.src.data import GraphDataLoaders
-from building_gan.src.models import Generator, Discriminator
+from building_gan.src.models import VoxelGNNGenerator, VoxelGNNDiscriminator
 
 
 class TrainerHelper:
     @staticmethod
-    def compute_gradient_penalty(discriminator: Discriminator, voxel_batch: Batch, label_hard: Batch, lambda_gp: float):
-        e = torch.rand(voxel_batch.types_onehot.shape[0], 1)
-        e = e.to(label_hard.device)
+    def compute_gradient_penalty(
+        discriminator: VoxelGNNDiscriminator,
+        local_graph: Batch,
+        voxel_graph: Batch,
+        label_soft: Batch,
+        lambda_gp: float,
+    ):
+        e = torch.rand(voxel_graph.types_onehot.shape[0], 1)
+        e = e.to(label_soft.device)
 
-        interpolated = (e * voxel_batch.types_onehot + ((1 - e) * label_hard)).requires_grad_(True)
-        interpolated = interpolated.to(label_hard.device)
+        interpolated = (e * voxel_graph.types_onehot + ((1 - e) * label_soft)).requires_grad_(True)
+        interpolated = interpolated.to(label_soft.device)
 
         interpolated_hard = torch.zeros_like(interpolated)
         interpolated_hard.scatter_(-1, interpolated.argmax(dim=1, keepdim=True), 1.0)
 
-        d_loss_interpolated = discriminator(voxel_batch, interpolated)
+        d_loss_interpolated = discriminator(local_graph, voxel_graph, interpolated)
 
         gradients = torch.autograd.grad(
             outputs=d_loss_interpolated,
             inputs=interpolated,
-            grad_outputs=torch.ones_like(d_loss_interpolated).to(label_hard.device),
+            grad_outputs=torch.ones_like(d_loss_interpolated).to(label_soft.device),
             create_graph=True,
             retain_graph=True,
             only_inputs=True,
@@ -47,8 +54,8 @@ class TrainerHelper:
 class Trainer(TrainerHelper):
     def __init__(
         self,
-        generator: Generator,
-        discriminator: Discriminator,
+        generator: VoxelGNNGenerator,
+        discriminator: VoxelGNNDiscriminator,
         dataloaders: GraphDataLoaders,
         optimizer_generator: torch.optim.Optimizer,
         optimizer_discriminator: torch.optim.Optimizer,
@@ -66,12 +73,12 @@ class Trainer(TrainerHelper):
         return
 
     @torch.no_grad()
-    def _visualize_one(self, local_graph, voxel_graph, program_noise, voxel_noise):
+    def _visualize_one(self, label_hard, local_graph, voxel_graph, d_loss, g_loss, epoch):
         self.generator.eval()
 
-        voxel_types_generated = self.generator(
-            local_graph, voxel_graph, program_noise, voxel_noise, onehot_to_type=True
-        )
+        clear_output(wait=True)
+
+        voxel_types_generated = label_hard.argmax(dim=1)
 
         accuracy = (voxel_types_generated == voxel_graph.type).float().mean().item()
 
@@ -84,11 +91,11 @@ class Trainer(TrainerHelper):
         ax_legend = fig.add_subplot(1, 5, 5, projection="3d")
 
         ax_graph_local.set_title("Graph\n")
-        ax_voxel_grid.set_title("Voxel Grid\n")
+        ax_voxel_grid.set_title("Irregular Voxel Grid\n")
         ax_voxel_groundtruth.set_title("Ground Truth\n")
-        ax_voxel_generated.set_title(f"Generated, (acc: {accuracy:.4f})\n")
+        ax_voxel_generated.set_title(f"{epoch}, Generated, (acc: {accuracy:.4f})\n")
         ax_legend.set_title("Legend\n")
-
+        ax_legend.set_title(f"D_loss: {d_loss:.4f}, G_loss: {g_loss:.4f}\n")
         for src, trg in local_graph.edge_index.t():
             z_src, y_src, x_src = local_graph.center[src].tolist()
             z_trg, y_trg, x_trg = local_graph.center[trg].tolist()
@@ -132,11 +139,11 @@ class Trainer(TrainerHelper):
             voxel_grid.set_edgecolor("gray")
             ax_voxel_grid.add_collection3d(voxel_grid)
 
-            voxel_groundtruth = Poly3DCollection(voxel_faces, alpha=0.035 if voxel_type_real in (-1, -2) else 1.0)
+            voxel_groundtruth = Poly3DCollection(voxel_faces, alpha=0.035 if voxel_type_real in (6, 7) else 1.0)
             voxel_groundtruth.set_facecolor(self.configuration.COLORS[voxel_type_real])
             ax_voxel_groundtruth.add_collection3d(voxel_groundtruth)
 
-            voxel_generated = Poly3DCollection(voxel_faces, alpha=0.035 if voxel_type_generated in (-1, -2) else 1.0)
+            voxel_generated = Poly3DCollection(voxel_faces, alpha=0.035 if voxel_type_generated in (6, 7) else 1.0)
             voxel_generated.set_facecolor(self.configuration.COLORS[voxel_type_generated])
             ax_voxel_generated.add_collection3d(voxel_generated)
 
@@ -168,55 +175,86 @@ class Trainer(TrainerHelper):
             ax.set_ylim(min_coords[1], max_coords[1])
             ax.set_zlim(min_coords[0], max_coords[0])
 
+        plt.show()
+
+        os.makedirs(self.configuration.LOG_DIR, exist_ok=True)
+        fig.savefig(os.path.join(self.configuration.LOG_DIR, f"epoch_{epoch}.png"))
+
         self.generator.train()
 
-    def _train_each_epoch(self):
+    def _train_each_epoch(self, epoch):
         g_loss_total = []
-        d_loss_total = []
 
-        for i, (local_graph, voxel_graph) in enumerate(self.dataloaders.train_dataloader):
-            # Train Discriminator
-            self.optimizer_discriminator.zero_grad()
-
+        for _, (local_graph, voxel_graph) in enumerate(self.dataloaders.train_dataloader):
             local_graph = local_graph.to(self.configuration.DEVICE)
             voxel_graph = voxel_graph.to(self.configuration.DEVICE)
 
-            program_noise = torch.randn(local_graph.num_nodes, self.configuration.PROGRAM_NOISE_DIM).to(
-                self.configuration.DEVICE
-            )
+            # 1. Train Discriminator
+            for _ in range(self.configuration.N_CRITIC):
+                self.optimizer_discriminator.zero_grad()
 
-            voxel_noise = torch.randn(voxel_graph.num_nodes, self.configuration.VOXEL_NOISE_DIM).to(
-                self.configuration.DEVICE
-            )
+                z = torch.randn(voxel_graph.num_nodes, self.configuration.Z_DIM).to(self.configuration.DEVICE)
+                label_hard, label_soft = self.generator(local_graph, voxel_graph, z)
 
-            label_hard = self.generator(local_graph, voxel_graph, program_noise, voxel_noise)
+                # Discriminator loss
+                d_real = self.discriminator(local_graph, voxel_graph, voxel_graph.types_onehot)
+                d_fake = self.discriminator(local_graph, voxel_graph, label_hard.detach())
 
-            d_loss_real = -self.discriminator(voxel_graph, voxel_graph.types_onehot)
-            d_loss_fake = self.discriminator(voxel_graph, label_hard)
+                d_loss_real = torch.nn.functional.binary_cross_entropy(d_real, torch.ones_like(d_real))
+                d_loss_fake = torch.nn.functional.binary_cross_entropy(d_fake, torch.zeros_like(d_fake))
 
-            gradient_penalty = self.compute_gradient_penalty(
-                self.discriminator, voxel_graph, label_hard, self.configuration.LAMBDA_GP
-            )
+                gp = self.compute_gradient_penalty(
+                    self.discriminator, local_graph, voxel_graph, label_soft, self.configuration.LAMBDA_GP
+                )
 
-            d_loss = d_loss_real + d_loss_fake + gradient_penalty
-            d_loss.backward(retain_graph=True)
-            self.optimizer_discriminator.step()
+                d_loss = d_loss_fake + d_loss_real + gp
+                d_loss.backward()
+                self.optimizer_discriminator.step()
 
-            if (i + 1) % self.configuration.N_CRITIC == 0 or self.sanity_checking:
-                # Train Generator
-                self.optimizer_generator.zero_grad()
+            # 2. Train Generator
+            self.optimizer_generator.zero_grad()
+            z = torch.randn(voxel_graph.num_nodes, self.configuration.Z_DIM).to(self.configuration.DEVICE)
 
-                g_loss = -self.discriminator(voxel_graph, label_hard)
-                g_loss.backward()
-                self.optimizer_generator.step()
+            # Generate new fake data
+            label_hard, _ = self.generator(local_graph, voxel_graph, z)
+            d_fake = self.discriminator(local_graph, voxel_graph, label_hard)
+            g_loss_adv = torch.nn.functional.binary_cross_entropy(d_fake, torch.ones_like(d_fake))
 
-                g_loss_total.append(g_loss.item())
-                d_loss_total.append(d_loss.item())
+            g_loss_label = torch.nn.functional.smooth_l1_loss(label_hard, voxel_graph.types_onehot) * 15
+
+            g_ratio = label_hard.sum(dim=0) / voxel_graph.num_nodes
+            predicted_ratios = (label_hard * g_ratio.unsqueeze(0)).sum(dim=1, keepdim=True)
+            g_loss_ratio = torch.nn.functional.l1_loss(predicted_ratios, voxel_graph.node_ratio) * 10
+
+            g_loss = g_loss_adv + g_loss_ratio + g_loss_label
+
+            g_loss.backward()
+            self.optimizer_generator.step()
+
+            g_loss_total.append(g_loss.item())
 
             if self.sanity_checking:
-                self._visualize_one(local_graph, voxel_graph, program_noise, voxel_noise)
+                # if self.sanity_checking and (epoch % 10 == 0 or epoch == 1):
+                self._visualize_one(
+                    label_hard,
+                    local_graph,
+                    voxel_graph,
+                    d_loss.item(),
+                    g_loss.item(),
+                    epoch,
+                )
 
-        return torch.tensor(g_loss_total).mean(), torch.tensor(d_loss_total).mean()
+                print(
+                    f"""
+                    d_loss_real: {d_loss_real.item()},
+                    d_loss_fake: {d_loss_fake.item()},
+                    d_loss: {d_loss.item()},
+                    g_loss: {g_loss.item()},
+                    g_loss_adv: {g_loss_adv.item()},
+                    g_loss_label: {g_loss_label.item()},
+                    g_loss_ratio: {g_loss_ratio.item()},
+                    """
+                )
 
     @torch.no_grad()
     def _validate_each_epoch(self):
@@ -227,14 +265,18 @@ class Trainer(TrainerHelper):
         return 0, 0
 
     def train(self):
+        print("Starting training with single sample for sanity check...")
+        print(f"Device: {self.configuration.DEVICE}")
+
         for epoch in range(1, self.configuration.EPOCHS + 1):
-            g_loss_train, d_loss_train = self._train_each_epoch()
+            self.generator.train()
+            self.discriminator.train()
 
-            if not self.sanity_checking:
-                g_loss_validation, d_loss_validation = self._validate_each_epoch()
-                pass
+            self._train_each_epoch(epoch)
 
-        return
+            # print(f"\nEpoch {epoch}/{self.configuration.EPOCHS}")
+            # print(f"Generator Loss: {g_loss:.4f}")
+            # print(f"Discriminator Loss: {d_loss:.4f}")
 
 
 if __name__ == "__main__":
@@ -242,20 +284,16 @@ if __name__ == "__main__":
     configuration.set_seed()
 
     dataloaders = GraphDataLoaders(configuration=configuration)
+    generator = VoxelGNNGenerator(configuration)
+    discriminator = VoxelGNNDiscriminator(configuration)
 
-    generator = Generator(
-        program_input_dim=dataloaders.dataset[0][0].num_features,
-        voxel_input_dim=dataloaders.dataset[0][1].num_features,
-        configuration=configuration,
+    optimizer_generator = torch.optim.Adam(
+        generator.parameters(), lr=configuration.LEARNING_RATE_GENERATOR, betas=configuration.BETAS
     )
 
-    discriminator = Discriminator(
-        voxel_input_dim=dataloaders.dataset[0][1].num_features,
-        configuration=configuration,
+    optimizer_discriminator = torch.optim.Adam(
+        discriminator.parameters(), lr=configuration.LEARNING_RATE_DISCRIMINATOR, betas=configuration.BETAS
     )
-
-    optimizer_generator = torch.optim.Adam(generator.parameters(), lr=configuration.LEARNING_RATE_GENERATOR)
-    optimizer_discriminator = torch.optim.Adam(discriminator.parameters(), lr=configuration.LEARNING_RATE_DISCRIMINATOR)
 
     trainer = Trainer(
         generator=generator,
