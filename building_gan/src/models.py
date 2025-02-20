@@ -1,8 +1,15 @@
+import os
+import sys
 import torch
 import torch_scatter
 import torch.nn as nn
 import torch_geometric.nn as tgnn
 import torch_geometric.utils as tgutils
+
+if os.path.abspath(os.path.join(os.path.dirname(__file__), "../../")) not in sys.path:
+    sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), "../../")))
+
+from building_gan.src.config import Configuration
 
 
 class GumbelSoftmax(nn.Module):
@@ -60,13 +67,14 @@ class PointerBasedCrossModalModule(nn.Module):
         self.mlp_program = nn.Linear(hidden_dim, hidden_dim)
         self.mlp_voxel = nn.Linear(hidden_dim, hidden_dim)
         self.mlp_mask = nn.Sequential(
-            nn.Linear(hidden_dim, hidden_dim),
-            nn.LeakyReLU(),
-            nn.Linear(hidden_dim, 2),
+            nn.Linear(hidden_dim, hidden_dim // 2),
+            nn.Linear(hidden_dim // 2, 2),
         )
         self.gumbel_softmax = GumbelSoftmax()
         self.theta = nn.Parameter(torch.Tensor(hidden_dim, 1))
         nn.init.xavier_normal_(self.theta)
+
+        self.gat = tgnn.GAT(hidden_dim, hidden_dim, num_layers=5)
 
     def forward(self, x, v, cross_edge_index):
         # Conceptually, these pointer modules should gradually improve the design.
@@ -93,9 +101,10 @@ class PointerBasedCrossModalModule(nn.Module):
 
         # (12) v^{t+1}_k = v^t_k + mask_k \sum_i att_{k,i} x^T_i
         summed = tgutils.scatter(src=x_selected * attention_soft, index=cross_edge_index[1], reduce="sum")
-        v = v + mask_soft * summed
+        # v = v + mask_soft * summed
+        v = v + summed
 
-        return v, mask_hard, attention_hard
+        return v, mask_hard, mask_soft, attention_hard, attention_soft
 
 
 class ProgramGNNBlock(tgnn.MessagePassing):
@@ -105,10 +114,26 @@ class ProgramGNNBlock(tgnn.MessagePassing):
         self.mlp_message = nn.Sequential(
             nn.Linear(hidden_dim * 2, hidden_dim),
             nn.LeakyReLU(),
+            nn.Linear(hidden_dim, hidden_dim),
+            nn.LeakyReLU(),
+            nn.Linear(hidden_dim, hidden_dim),
+            nn.LeakyReLU(),
+            nn.Linear(hidden_dim, hidden_dim),
+            nn.LeakyReLU(),
+            nn.Linear(hidden_dim, hidden_dim),
+            nn.LeakyReLU(),
         )
 
         self.mlp_update = nn.Sequential(
             nn.Linear(hidden_dim * 3, hidden_dim),
+            nn.LeakyReLU(),
+            nn.Linear(hidden_dim, hidden_dim),
+            nn.LeakyReLU(),
+            nn.Linear(hidden_dim, hidden_dim),
+            nn.LeakyReLU(),
+            nn.Linear(hidden_dim, hidden_dim),
+            nn.LeakyReLU(),
+            nn.Linear(hidden_dim, hidden_dim),
             nn.LeakyReLU(),
         )
 
@@ -142,7 +167,6 @@ class ProgramGNN(nn.Module):
 
         self.mlp_encoder = nn.Sequential(
             nn.Linear(input_dim + noise_dim, hidden_dim),
-            nn.LeakyReLU(),
         )
 
         self.layers = nn.ModuleList([ProgramGNNBlock(hidden_dim) for _ in range(num_steps)])
@@ -162,15 +186,31 @@ class ProgramGNN(nn.Module):
 
 class VoxelGNNBlock(tgnn.MessagePassing):
     def __init__(self, hidden_dim):
-        super().__init__(aggr="sum")
+        super().__init__(aggr="mean")
 
         self.mlp_message = nn.Sequential(
             nn.Linear(3 * hidden_dim, hidden_dim),
+            nn.LeakyReLU(),
+            nn.Linear(hidden_dim, hidden_dim),
+            nn.LeakyReLU(),
+            nn.Linear(hidden_dim, hidden_dim),
+            nn.LeakyReLU(),
+            nn.Linear(hidden_dim, hidden_dim),
+            nn.LeakyReLU(),
+            nn.Linear(hidden_dim, hidden_dim),
             nn.LeakyReLU(),
         )
 
         self.mlp_update = nn.Sequential(
             nn.Linear(2 * hidden_dim, hidden_dim),
+            nn.LeakyReLU(),
+            nn.Linear(hidden_dim, hidden_dim),
+            nn.LeakyReLU(),
+            nn.Linear(hidden_dim, hidden_dim),
+            nn.LeakyReLU(),
+            nn.Linear(hidden_dim, hidden_dim),
+            nn.LeakyReLU(),
+            nn.Linear(hidden_dim, hidden_dim),
             nn.LeakyReLU(),
         )
 
@@ -194,10 +234,8 @@ class VoxelGNN(tgnn.MessagePassing):
 
         self.mlp_encoder = nn.Sequential(
             nn.Linear(input_dim + noise_dim, hidden_dim),
-            nn.LeakyReLU(),
         )
 
-        self.positional_encoder = PositionalEncoder(hidden_dim, 100)
         self.positional_encoder = PositionalEncoder(hidden_dim, 100)
 
         self.pointer_based_cross_modal_module = PointerBasedCrossModalModule(hidden_dim)
@@ -222,7 +260,9 @@ class VoxelGNN(tgnn.MessagePassing):
             v += self.label_encoder(label_onehot)
 
         mask_hard = None
+        mask_soft = None
         attention_hard = None
+        attention_soft = None
 
         # [(6), (7), (8), (9), (10), (11), (12)]
         for li, layer in enumerate(self.layers):
@@ -234,9 +274,11 @@ class VoxelGNN(tgnn.MessagePassing):
 
             # "baseline model uses 12 steps of message passing and call the pointer module once every 2 steps"
             if (li + 1) % 2 == 0 and not skip_pointer:
-                v, mask_hard, attention_hard = self.pointer_based_cross_modal_module(x, v, voxel_graph.cross_edge_index)
+                v, mask_hard, mask_soft, attention_hard, attention_soft = self.pointer_based_cross_modal_module(
+                    x, v, voxel_graph.cross_edge_index
+                )
 
-        return v, mask_hard, attention_hard
+        return v, mask_hard, mask_soft, attention_hard, attention_soft
 
 
 class Generator(nn.Module):
@@ -264,38 +306,48 @@ class Generator(nn.Module):
 
         self.pointer_based_cross_modal_module = PointerBasedCrossModalModule(configuration.HIDDEN_DIM)
 
+        self.configuration = configuration
+
         self.to(configuration.DEVICE)
 
-    def get_label_hard(self, cross_edge_index, types_onehot, attention_hard, mask_hard):
+    def get_labels(self, cross_edge_index, types_onehot, attention_hard, attention_soft, mask_hard, mask_soft):
         types_onehot_selected = types_onehot[cross_edge_index[0]]
 
         label_hard = tgutils.scatter(attention_hard * types_onehot_selected, index=cross_edge_index[1], reduce="sum")
-        label_hard *= mask_hard
+        # label_hard *= mask_hard
 
-        return label_hard
+        label_soft = tgutils.scatter(attention_soft * types_onehot_selected, index=cross_edge_index[1], reduce="sum")
+        # label_soft *= mask_soft
+
+        return label_hard, label_soft
+
+    def onehot_to_type(self, label_hard):
+        voxel_types = torch.zeros(label_hard.shape[0], 1) + self.configuration.VOID
+        voxel_types = voxel_types.to(label_hard.device)
+        return torch.where(
+            (label_hard.sum(dim=1) != 0).unsqueeze(1), label_hard.argmax(dim=1, keepdim=True), voxel_types
+        )
 
     def forward(self, local_graph, voxel_graph, program_noise, voxel_noise, onehot_to_type=False):
         # computes equations (1), (2), (3), (4)
         x = self.program_gnn(local_graph, program_noise)
 
         # computes equations (5), (6), (7), (8), (9), (10), (11), (12)
-        _, mask_hard, attention_hard = self.voxel_gnn(voxel_graph, x, voxel_noise)
+        _, mask_hard, mask_soft, attention_hard, attention_soft = self.voxel_gnn(voxel_graph, x, voxel_noise)
 
-        label_hard = self.get_label_hard(
-            voxel_graph.cross_edge_index, local_graph.types_onehot, attention_hard, mask_hard
+        label_hard, label_soft = self.get_labels(
+            voxel_graph.cross_edge_index,
+            voxel_graph.types_onehot,
+            attention_hard,
+            attention_soft,
+            mask_hard,
+            mask_soft,
         )
 
         if onehot_to_type:
-            return self.onehot_to_type(label_hard)
+            label_hard = self.onehot_to_type(label_hard)
 
-        return label_hard
-
-    def onehot_to_type(self, label_hard):
-        voxel_types = torch.zeros(label_hard.shape[0], 1) - 1
-        voxel_types = voxel_types.to(label_hard.device)
-        return torch.where(
-            (label_hard.sum(dim=1) != 0).unsqueeze(1), label_hard.argmax(dim=1, keepdim=True), voxel_types
-        )
+        return label_hard, label_soft
 
 
 class Discriminator(nn.Module):
@@ -310,6 +362,7 @@ class Discriminator(nn.Module):
             nn.Linear(configuration.HIDDEN_DIM // 4, configuration.HIDDEN_DIM // 8),
             nn.LeakyReLU(),
             nn.Linear(configuration.HIDDEN_DIM // 8, 1),
+            nn.Sigmoid(),
         )
 
         self.voxel_gnn = VoxelGNN(
@@ -324,7 +377,157 @@ class Discriminator(nn.Module):
 
     def forward(self, voxel_graph, label_onehot):
         v, *_ = self.voxel_gnn(voxel_graph, None, None, label_onehot=label_onehot.float(), skip_pointer=True)
+
         v = tgnn.global_max_pool(v.cpu(), voxel_graph.batch.cpu())
         v = v.to(label_onehot.device)
 
-        return self.mlp_discriminate(v).mean()
+        return self.mlp_discriminate(v)
+
+
+class VoxelGNNGenerator(nn.Module):
+    def __init__(self, configuration: Configuration):
+        super().__init__()
+
+        if configuration.GENERATOR_CONV_TYPE == "GCNCONV":
+            conv = tgnn.GCNConv
+        elif configuration.GENERATOR_CONV_TYPE == "GRAPHCONV":
+            conv = tgnn.GraphConv
+        elif configuration.GENERATOR_CONV_TYPE == "GATCONV":
+            conv = tgnn.GATConv
+        else:
+            raise ValueError(f"Invalid conv_type: {configuration.GENERATOR_CONV_TYPE}")
+
+        self.mlp_encoder = nn.Sequential(
+            nn.Linear(
+                configuration.LOCAL_GRAPH_DIM + configuration.VOXEL_GRAPH_DIM + configuration.Z_DIM,
+                configuration.GENERATOR_HIDDEN_DIM,
+            ),
+            nn.ReLU(True),
+            nn.Linear(configuration.GENERATOR_HIDDEN_DIM, configuration.GENERATOR_HIDDEN_DIM),
+            nn.ReLU(True),
+        )
+
+        self.encoder = []
+
+        out_channels = configuration.GENERATOR_HIDDEN_DIM
+        for _ in range(configuration.GENERATOR_ENCODER_REPEAT // 2):
+            self.encoder += [
+                (conv(out_channels, out_channels // 2), f"{configuration.INPUT_ARGS} -> x"),
+                nn.ReLU(True),
+            ]
+
+            out_channels //= 2
+
+        for _ in range(configuration.GENERATOR_ENCODER_REPEAT // 2):
+            self.encoder += [
+                (conv(out_channels, out_channels * 2), f"{configuration.INPUT_ARGS} -> x"),
+                nn.ReLU(True),
+            ]
+
+            out_channels *= 2
+
+        self.encoder = tgnn.Sequential(input_args=configuration.INPUT_ARGS, modules=self.encoder)
+
+        self.decoder = nn.Sequential(
+            nn.Linear(
+                configuration.LOCAL_GRAPH_DIM
+                + configuration.VOXEL_GRAPH_DIM
+                + configuration.Z_DIM
+                + out_channels
+                + configuration.GENERATOR_HIDDEN_DIM,
+                configuration.GENERATOR_HIDDEN_DIM,
+            ),
+            nn.ReLU(True),
+            nn.Linear(configuration.GENERATOR_HIDDEN_DIM, configuration.GENERATOR_HIDDEN_DIM // 2),
+            nn.ReLU(True),
+            nn.Linear(configuration.GENERATOR_HIDDEN_DIM // 2, configuration.GENERATOR_HIDDEN_DIM // 4),
+            nn.ReLU(True),
+            nn.Linear(configuration.GENERATOR_HIDDEN_DIM // 4, configuration.GENERATOR_HIDDEN_DIM // 8),
+            nn.ReLU(True),
+            nn.Linear(configuration.GENERATOR_HIDDEN_DIM // 8, configuration.NUM_CLASSES),
+        )
+
+        self.to(configuration.DEVICE)
+
+    def forward(self, local_graph, voxel_graph, z):
+        x_ = torch.cat([local_graph.x[voxel_graph.type], voxel_graph.x, z], dim=-1)
+        x = self.mlp_encoder(x_)
+
+        encoded = self.encoder(x=x, edge_index=voxel_graph.edge_index)
+        encoded = torch.cat([encoded, x, x_], dim=-1)
+
+        decoded = self.decoder(encoded)
+
+        label_soft = torch.nn.functional.gumbel_softmax(decoded, tau=0.5)
+        label_hard = torch.zeros_like(label_soft)
+        label_hard.scatter_(-1, label_soft.argmax(dim=1, keepdim=True), 1.0)
+        label_hard = label_hard - label_soft.detach() + label_soft
+
+        return label_hard, label_soft
+
+
+class VoxelGNNDiscriminator(nn.Module):
+    def __init__(self, configuration: Configuration):
+        super().__init__()
+
+        if configuration.DISCRIMINATOR_CONV_TYPE == "GCNCONV":
+            conv = tgnn.GCNConv
+        elif configuration.DISCRIMINATOR_CONV_TYPE == "GRAPHCONV":
+            conv = tgnn.GraphConv
+        elif configuration.DISCRIMINATOR_CONV_TYPE == "GATCONV":
+            conv = tgnn.GATConv
+        else:
+            raise ValueError(f"Invalid conv_type: {configuration.DISCRIMINATOR_CONV_TYPE}")
+
+        self.mlp_encoder = nn.Sequential(
+            nn.Linear(
+                configuration.LOCAL_GRAPH_DIM + configuration.VOXEL_GRAPH_DIM + configuration.NUM_CLASSES,
+                configuration.DISCRIMINATOR_HIDDEN_DIM,
+            ),
+            nn.ReLU(True),
+            nn.Linear(configuration.DISCRIMINATOR_HIDDEN_DIM, configuration.DISCRIMINATOR_HIDDEN_DIM),
+            nn.ReLU(True),
+        )
+
+        self.encoder = []
+
+        out_channels = configuration.DISCRIMINATOR_HIDDEN_DIM
+        for _ in range(configuration.DISCRIMINATOR_ENCODER_REPEAT // 2):
+            self.encoder += [
+                (conv(out_channels, out_channels // 2), f"{configuration.INPUT_ARGS} -> x"),
+                nn.ReLU(True),
+            ]
+
+            out_channels //= 2
+
+        for _ in range(configuration.DISCRIMINATOR_ENCODER_REPEAT // 2):
+            self.encoder += [
+                (conv(out_channels, out_channels * 2), f"{configuration.INPUT_ARGS} -> x"),
+                nn.ReLU(True),
+            ]
+
+            out_channels *= 2
+
+        self.encoder = tgnn.Sequential(input_args=configuration.INPUT_ARGS, modules=self.encoder)
+
+        self.decoder = nn.Sequential(
+            nn.Linear(configuration.DISCRIMINATOR_HIDDEN_DIM, configuration.DISCRIMINATOR_HIDDEN_DIM // 2),
+            nn.ReLU(True),
+            nn.Linear(configuration.DISCRIMINATOR_HIDDEN_DIM // 2, configuration.DISCRIMINATOR_HIDDEN_DIM // 4),
+            nn.ReLU(True),
+            nn.Linear(configuration.DISCRIMINATOR_HIDDEN_DIM // 4, configuration.DISCRIMINATOR_HIDDEN_DIM // 8),
+            nn.ReLU(True),
+            nn.Linear(configuration.DISCRIMINATOR_HIDDEN_DIM // 8, 1),
+            # nn.Sigmoid(),
+        )
+
+        self.to(configuration.DEVICE)
+
+    def forward(self, local_graph, voxel_graph, label_hard):
+        x_ = torch.cat([local_graph.x[voxel_graph.type], voxel_graph.x, label_hard], dim=-1)
+        x = self.mlp_encoder(x_)
+
+        encoded = self.encoder(x=x, edge_index=voxel_graph.edge_index)
+        decoded = self.decoder(encoded)
+
+        return decoded.mean()
