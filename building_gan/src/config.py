@@ -84,6 +84,21 @@ class ModelConfiguration:
 
     LOG_DIR = os.path.abspath(os.path.join(__file__, "../../runs"))
 
+    GENERATOR_CONV_TYPE = "GRAPHCONV"
+    GENERATOR_ENCODER_REPEAT = 5
+    GENERATOR_HIDDEN_DIM = 128
+
+    DISCRIMINATOR_CONV_TYPE = "GATCONV"
+    DISCRIMINATOR_ENCODER_REPEAT = 3
+    DISCRIMINATOR_HIDDEN_DIM = 64
+
+    Z_DIM = 128
+    LOCAL_GRAPH_DIM = 18
+    VOXEL_GRAPH_DIM = 11
+    ENCODER_DROPOUT_RATE = 0.2
+
+    INPUT_ARGS = "x, edge_index"
+
 
 class Configuration(ProgramMap, DataConfiguration, ModelConfiguration):
     """Configuration for the plan generator"""
