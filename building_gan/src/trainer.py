@@ -69,6 +69,10 @@ class Trainer(TrainerHelper):
         self.configuration = configuration
         self.sanity_checking = self.configuration.SANITY_CHECKING
 
+        self.generator_scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(
+            self.optimizer_generator, patience=5, verbose=True, factor=0.1
+        )
+
     def visualize(self):
         return
 
@@ -220,11 +224,16 @@ class Trainer(TrainerHelper):
             d_fake = self.discriminator(local_graph, voxel_graph, label_hard)
             g_loss_adv = torch.nn.functional.binary_cross_entropy(d_fake, torch.ones_like(d_fake))
 
-            g_loss_label = torch.nn.functional.smooth_l1_loss(label_hard, voxel_graph.types_onehot) * 15
+            g_loss_label = (
+                torch.nn.functional.smooth_l1_loss(label_hard, voxel_graph.types_onehot)
+                * self.configuration.LAMBDA_LABEL
+            )
 
             g_ratio = label_hard.sum(dim=0) / voxel_graph.num_nodes
             predicted_ratios = (label_hard * g_ratio.unsqueeze(0)).sum(dim=1, keepdim=True)
-            g_loss_ratio = torch.nn.functional.l1_loss(predicted_ratios, voxel_graph.node_ratio) * 10
+            g_loss_ratio = (
+                torch.nn.functional.l1_loss(predicted_ratios, voxel_graph.node_ratio) * self.configuration.LAMBDA_RATIO
+            )
 
             g_loss = g_loss_adv + g_loss_ratio + g_loss_label
 
@@ -255,6 +264,8 @@ class Trainer(TrainerHelper):
                     g_loss_ratio: {g_loss_ratio.item()},
                     """
                 )
+
+        self.generator_scheduler.step(torch.tensor(g_loss_total).mean())
 
     @torch.no_grad()
     def _validate_each_epoch(self):
