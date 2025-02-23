@@ -78,13 +78,17 @@ class GraphDataset(Dataset):
             os.path.join(self.configuration.SAVE_DATA_PATH, d)
             for d in os.listdir(self.configuration.SAVE_DATA_PATH)
             if d.endswith(configuration.LOCAL_DATA_SUFFIX)
-        ][: configuration.DATA_SLICER]
+        ]
 
         self.voxel_graph_data_files = [
             os.path.join(self.configuration.SAVE_DATA_PATH, d)
             for d in os.listdir(self.configuration.SAVE_DATA_PATH)
             if d.endswith(configuration.VOXEL_DATA_SUFFIX)
-        ][: configuration.DATA_SLICER]
+        ]
+
+        if self.configuration.SANITY_CHECKING:
+            self.local_graph_data_files = [self.local_graph_data_files[self.configuration.DATA_POINT]]
+            self.voxel_graph_data_files = [self.voxel_graph_data_files[self.configuration.DATA_POINT]]
 
         assert len(self.local_graph_data_files) == len(self.voxel_graph_data_files)
 
