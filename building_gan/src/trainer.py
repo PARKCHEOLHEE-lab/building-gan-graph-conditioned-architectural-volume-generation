@@ -95,7 +95,7 @@ class Trainer(TrainerHelper):
         ax_legend = fig.add_subplot(1, 5, 5, projection="3d")
 
         ax_graph_local.set_title("Graph\n")
-        ax_voxel_grid.set_title("Irregular Voxel Grid\n")
+        ax_voxel_grid.set_title(f"Irregular Voxel Grid (nodes: {voxel_graph.num_nodes})\n")
         ax_voxel_groundtruth.set_title("Ground Truth\n")
         ax_voxel_generated.set_title(f"{epoch}, Generated, (acc: {accuracy:.4f})\n")
         ax_legend.set_title("Legend\n")
