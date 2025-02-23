@@ -61,7 +61,6 @@ class VoxelGraphData:
         self.voxel_graph_types = voxel_graph_data["voxel_graph_types"]
         self.voxel_graph_types_onehot = voxel_graph_types_onehot
         self.edge_index = voxel_graph_data["voxel_graph_edge_indices"]
-        self.voxel_and_local_cross_edge_indices = voxel_graph_data["voxel_and_local_cross_edge_indices"]
         self.voxel_graph_floor_levels = voxel_graph_data["voxel_graph_floor_levels"]
         self.voxel_graph_node_coordinate = voxel_graph_data["voxel_graph_node_coordinate"]
         self.voxel_graph_node_dimension = voxel_graph_data["voxel_graph_node_dimension"]
@@ -113,7 +112,6 @@ class GraphDataset(Dataset):
                 Data(
                     x=voxel_graph.x,
                     edge_index=voxel_graph.edge_index,
-                    cross_edge_index=voxel_graph.voxel_and_local_cross_edge_indices,
                     voxel_level=voxel_graph.voxel_graph_floor_levels,
                     type=voxel_graph.voxel_graph_types,
                     types_onehot=voxel_graph.voxel_graph_types_onehot,
@@ -134,30 +132,9 @@ class GraphDataset(Dataset):
     @staticmethod
     def collate_fn(batch):
         local_graphs, voxel_graphs = zip(*batch)
-
-        original_cross_edges = []
-        cumulative_sum_local_nodes = 0
-        cumulative_sum_voxel_nodes = 0
-
-        for i, (local_graph, voxel_graph) in enumerate(zip(local_graphs, voxel_graphs)):
-            cross_edges = voxel_graph.cross_edge_index.clone()
-
-            # adjust cross_edge_index for batch
-            if i > 0:
-                cross_edges[0] += cumulative_sum_local_nodes
-                cross_edges[1] += cumulative_sum_voxel_nodes
-
-            original_cross_edges.append(cross_edges)
-
-            cumulative_sum_local_nodes += local_graph.num_nodes
-            cumulative_sum_voxel_nodes += voxel_graph.num_nodes
-
+        
         local_batch = Batch.from_data_list(local_graphs)
         voxel_batch = Batch.from_data_list(voxel_graphs)
-        voxel_batch.cross_edge_index = torch.cat(original_cross_edges, dim=1)
-
-        assert voxel_batch.cross_edge_index[0].max() + 1 == local_batch.num_nodes
-        assert voxel_batch.cross_edge_index[1].max() + 1 == voxel_batch.num_nodes
 
         return local_batch, voxel_batch
 
@@ -356,24 +333,6 @@ class DataCreatorHelper:
 
         each_floor_voxel_counts = voxel_graph_floor_levels.unique(return_counts=True)[1][0].item()
 
-        # compute voxel and local graph cross edge indices
-        voxel_id = 0
-        local_graph_cross_edge_indices = []
-        voxel_graph_cross_edge_indices = []
-        for local_graph_node_indices_each_level in local_graph_node_indices_per_level:
-            local_graph_cross_edge_indices.extend(local_graph_node_indices_each_level * each_floor_voxel_counts)
-            for _ in range(each_floor_voxel_counts):
-                voxel_graph_cross_edge_indices += [voxel_id] * len(local_graph_node_indices_each_level)
-                voxel_id += 1
-
-        local_graph_cross_edge_indices = torch.tensor(local_graph_cross_edge_indices)
-        voxel_graph_cross_edge_indices = torch.tensor(voxel_graph_cross_edge_indices)
-        voxel_and_local_cross_edge_indices = torch.stack(
-            [local_graph_cross_edge_indices, voxel_graph_cross_edge_indices]
-        )
-
-        assert len(local_graph_cross_edge_indices) == len(voxel_graph_cross_edge_indices)
-
         local_graph_data = {
             "far": far,
             "type_ratio": type_ratio,
@@ -396,7 +355,6 @@ class DataCreatorHelper:
             "voxel_graph_floor_levels_normalized": voxel_graph_floor_levels_normalized,
             "voxel_graph_features": voxel_graph_features,
             "voxel_graph_edge_indices": voxel_graph_edge_indices,
-            "voxel_and_local_cross_edge_indices": voxel_and_local_cross_edge_indices,
             "voxel_graph_node_coordinate": voxel_graph_node_coordinate,
             "voxel_graph_node_dimension": voxel_graph_node_dimension,
             "voxel_graph_location": voxel_graph_location,
