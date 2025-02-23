@@ -132,7 +132,7 @@ class GraphDataset(Dataset):
     @staticmethod
     def collate_fn(batch):
         local_graphs, voxel_graphs = zip(*batch)
-        
+
         local_batch = Batch.from_data_list(local_graphs)
         voxel_batch = Batch.from_data_list(voxel_graphs)
 
@@ -330,8 +330,6 @@ class DataCreatorHelper:
         local_graph_node_indices_per_level = [[] for _ in range(max(local_graph_floor_levels) + 1)]
         for i, floor_level in enumerate(local_graph_floor_levels):
             local_graph_node_indices_per_level[floor_level].append(i)
-
-        each_floor_voxel_counts = voxel_graph_floor_levels.unique(return_counts=True)[1][0].item()
 
         local_graph_data = {
             "far": far,
