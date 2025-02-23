@@ -20,8 +20,6 @@ class ProgramMap:
     NOT_ALLOWED = 7
 
     COLORS = {
-        # VOID: "gray",
-        # NOT_ALLOWED: "white",
         LOBBY_CORRIDOR: "brown",
         RESTROOM: "red",
         STAIRS: "yellow",

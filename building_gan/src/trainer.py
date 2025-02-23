@@ -181,13 +181,13 @@ class Trainer(TrainerHelper):
 
         plt.show()
 
-        os.makedirs(self.configuration.LOG_DIR, exist_ok=True)
         fig.savefig(os.path.join(self.configuration.LOG_DIR, f"epoch_{epoch}.png"))
 
         self.generator.train()
 
     def _train_each_epoch(self, epoch):
         g_loss_total = []
+        d_loss_total = []
 
         for _, (local_graph, voxel_graph) in enumerate(self.dataloaders.train_dataloader):
             local_graph = local_graph.to(self.configuration.DEVICE)
@@ -215,6 +215,8 @@ class Trainer(TrainerHelper):
                 d_loss.backward()
                 self.optimizer_discriminator.step()
 
+                d_loss_total.append(d_loss.item())
+
             # 2. Train Generator
             self.optimizer_generator.zero_grad()
             z = torch.randn(voxel_graph.num_nodes, self.configuration.Z_DIM).to(self.configuration.DEVICE)
@@ -224,16 +226,13 @@ class Trainer(TrainerHelper):
             d_fake = self.discriminator(local_graph, voxel_graph, label_hard)
             g_loss_adv = torch.nn.functional.binary_cross_entropy(d_fake, torch.ones_like(d_fake))
 
-            g_loss_label = (
-                torch.nn.functional.smooth_l1_loss(label_hard, voxel_graph.types_onehot)
-                * self.configuration.LAMBDA_LABEL
-            )
+            g_loss_label = torch.nn.functional.smooth_l1_loss(label_hard, voxel_graph.types_onehot)
+            g_loss_label *= self.configuration.LAMBDA_LABEL
 
-            g_ratio = label_hard.sum(dim=0) / voxel_graph.num_nodes
-            predicted_ratios = (label_hard * g_ratio.unsqueeze(0)).sum(dim=1, keepdim=True)
-            g_loss_ratio = (
-                torch.nn.functional.l1_loss(predicted_ratios, voxel_graph.node_ratio) * self.configuration.LAMBDA_RATIO
-            )
+            label_ratio = label_hard.sum(dim=0) / voxel_graph.num_nodes
+            label_ratio_predicted = (label_hard * label_ratio.unsqueeze(0)).sum(dim=1, keepdim=True)
+            g_loss_ratio = torch.nn.functional.l1_loss(label_ratio_predicted, voxel_graph.node_ratio)
+            g_loss_ratio *= self.configuration.LAMBDA_RATIO
 
             g_loss = g_loss_adv + g_loss_ratio + g_loss_label
 
@@ -276,6 +275,8 @@ class Trainer(TrainerHelper):
         return 0, 0
 
     def train(self):
+        os.makedirs(self.configuration.LOG_DIR, exist_ok=True)
+
         print("Starting training with single sample for sanity check...")
         print(f"Device: {self.configuration.DEVICE}")
 

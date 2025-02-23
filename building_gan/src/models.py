@@ -20,6 +20,8 @@ class VoxelGNNGenerator(nn.Module):
             conv = tgnn.GraphConv
         elif configuration.GENERATOR_CONV_TYPE == "GATCONV":
             conv = tgnn.GATConv
+        elif configuration.GENERATOR_CONV_TYPE == "GATV2CONV":
+            conv = tgnn.GATv2Conv
         else:
             raise ValueError(f"Invalid conv_type: {configuration.GENERATOR_CONV_TYPE}")
 
@@ -104,6 +106,8 @@ class VoxelGNNDiscriminator(nn.Module):
             conv = tgnn.GraphConv
         elif configuration.DISCRIMINATOR_CONV_TYPE == "GATCONV":
             conv = tgnn.GATConv
+        elif configuration.DISCRIMINATOR_CONV_TYPE == "GATV2CONV":
+            conv = tgnn.GATv2Conv
         else:
             raise ValueError(f"Invalid conv_type: {configuration.DISCRIMINATOR_CONV_TYPE}")
 
