@@ -1,13 +1,17 @@
 import os
 import sys
+import time
+import pytz
 import torch
+import datetime
 import matplotlib.pyplot as plt
 
-from typing import Hashable
+from typing import Hashable, Callable
 from matplotlib.patches import Patch
 from mpl_toolkits.mplot3d.art3d import Poly3DCollection
 from torch_geometric.data import Batch
 from IPython.display import clear_output
+from torch.utils.tensorboard import SummaryWriter
 
 if os.path.abspath(os.path.join(os.path.dirname(__file__), "../../")) not in sys.path:
     sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), "../../")))
@@ -50,6 +54,27 @@ class TrainerHelper:
 
         return gradient_penalty
 
+    @staticmethod
+    def runtime_calculator(func: Callable) -> Callable:
+        """A decorator function for measuring the runtime of another function.
+
+        Args:
+            func (Callable): Function to measure
+
+        Returns:
+            Callable: Decorator
+        """
+
+        def wrapper(*args, **kwargs):
+            start_time = time.time()
+            result = func(*args, **kwargs)
+            end_time = time.time()
+            runtime = end_time - start_time
+            print(f"The function {func.__name__} took {runtime} seconds to run.")
+            return result
+
+        return wrapper
+
 
 class Trainer(TrainerHelper):
     def __init__(
@@ -73,11 +98,32 @@ class Trainer(TrainerHelper):
             self.optimizer_generator, patience=5, verbose=True, factor=0.1
         )
 
+        self.summary_writer = SummaryWriter(
+            log_dir=os.path.join(
+                self.configuration.LOG_DIR,
+                datetime.datetime.now(pytz.timezone("Asia/Seoul")).strftime("%m-%d-%Y__%H-%M-%S"),
+            )
+        )
+
     def visualize(self):
         return
 
     @torch.no_grad()
-    def _visualize_one(self, label_hard, local_graph, voxel_graph, d_loss, g_loss, epoch):
+    def _visualize_one(
+        self,
+        label_hard,
+        local_graph,
+        voxel_graph,
+        d_loss_real,
+        d_loss_fake,
+        d_loss,
+        g_loss,
+        g_loss_adv,
+        g_loss_label,
+        g_loss_ratio,
+        g_loss_ratio_voids,
+        epoch,
+    ):
         self.generator.eval()
 
         clear_output(wait=True)
@@ -88,18 +134,20 @@ class Trainer(TrainerHelper):
 
         fig = plt.figure(figsize=(20, 5))
 
-        ax_graph_local = fig.add_subplot(1, 5, 1, projection="3d")
-        ax_voxel_grid = fig.add_subplot(1, 5, 2, projection="3d")
-        ax_voxel_groundtruth = fig.add_subplot(1, 5, 3, projection="3d")
-        ax_voxel_generated = fig.add_subplot(1, 5, 4, projection="3d")
-        ax_legend = fig.add_subplot(1, 5, 5, projection="3d")
+        ax_graph_local = fig.add_subplot(1, 6, 1, projection="3d")
+        ax_voxel_grid = fig.add_subplot(1, 6, 2, projection="3d")
+        ax_voxel_groundtruth = fig.add_subplot(1, 6, 3, projection="3d")
+        ax_voxel_generated = fig.add_subplot(1, 6, 4, projection="3d")
+        ax_legend = fig.add_subplot(1, 6, 5, projection="3d")
+        ax_loss = fig.add_subplot(1, 6, 6, projection="3d")
 
         ax_graph_local.set_title("Graph\n")
         ax_voxel_grid.set_title(f"Irregular Voxel Grid (nodes: {voxel_graph.num_nodes})\n")
         ax_voxel_groundtruth.set_title("Ground Truth\n")
         ax_voxel_generated.set_title(f"{epoch}, Generated, (acc: {accuracy:.4f})\n")
         ax_legend.set_title("Legend\n")
-        ax_legend.set_title(f"D_loss: {d_loss:.4f}, G_loss: {g_loss:.4f}\n")
+        ax_loss.set_title("Losses\n")
+
         for src, trg in local_graph.edge_index.t():
             z_src, y_src, x_src = local_graph.center[src].tolist()
             z_trg, y_trg, x_trg = local_graph.center[trg].tolist()
@@ -171,7 +219,26 @@ class Trainer(TrainerHelper):
         max_coords = torch.max(voxel_graph.coordinate + voxel_graph.dimension, dim=0).values.tolist()
         min_coords = torch.min(voxel_graph.coordinate, dim=0).values.tolist()
 
-        for ax in [ax_graph_local, ax_voxel_grid, ax_voxel_groundtruth, ax_voxel_generated, ax_legend]:
+        ax_loss.text(
+            max_coords[0] / 2,
+            max_coords[1] / 2,
+            max_coords[2] / 2,
+            s=f"""
+            d_loss_real: {d_loss_real:.4f}
+            d_loss_fake: {d_loss_fake:.4f}
+            d_loss: {d_loss:.4f}
+            g_loss: {g_loss:.4f}
+            g_loss_adv: {g_loss_adv:.4f}
+            g_loss_label: {g_loss_label:.4f}
+            g_loss_ratio: {g_loss_ratio:.4f}
+            g_loss_ratio_voids: {g_loss_ratio_voids:.4f}
+            """,
+            fontsize=7,
+            ha="center",
+            va="center",
+        )
+
+        for ax in [ax_graph_local, ax_voxel_grid, ax_voxel_groundtruth, ax_voxel_generated, ax_legend, ax_loss]:
             ax.set_box_aspect([1, 1, 1])
             ax.set_proj_type("ortho")
             ax._axis3don = False
@@ -179,12 +246,23 @@ class Trainer(TrainerHelper):
             ax.set_ylim(min_coords[1], max_coords[1])
             ax.set_zlim(min_coords[0], max_coords[0])
 
-        plt.show()
+        # plt.show()
 
-        fig.savefig(os.path.join(self.configuration.LOG_DIR, f"epoch_{epoch}.png"))
+        self.summary_writer.add_figure(f"epoch_{epoch}", fig, epoch)
+        self.summary_writer.add_scalar("g_loss", g_loss, epoch)
+        self.summary_writer.add_scalar("d_loss", d_loss, epoch)
+        self.summary_writer.add_scalar("d_loss_real", d_loss_real, epoch)
+        self.summary_writer.add_scalar("d_loss_fake", d_loss_fake, epoch)
+        self.summary_writer.add_scalar("g_loss_adv", g_loss_adv, epoch)
+        self.summary_writer.add_scalar("g_loss_label", g_loss_label, epoch)
+        self.summary_writer.add_scalar("g_loss_ratio", g_loss_ratio, epoch)
+        self.summary_writer.add_scalar("g_loss_ratio_voids", g_loss_ratio_voids, epoch)
+
+        # fig.savefig(os.path.join(self.summary_writer.log_dir, f"epoch_{epoch}.png"))
 
         self.generator.train()
 
+    @TrainerHelper.runtime_calculator
     def _train_each_epoch(self, epoch):
         g_loss_total = []
         d_loss_total = []
@@ -212,7 +290,7 @@ class Trainer(TrainerHelper):
                 )
 
                 d_loss = d_loss_fake + d_loss_real + gp
-                d_loss.backward()
+                d_loss.backward(retain_graph=True)
                 self.optimizer_discriminator.step()
 
                 d_loss_total.append(d_loss.item())
@@ -222,19 +300,21 @@ class Trainer(TrainerHelper):
             z = torch.randn(voxel_graph.num_nodes, self.configuration.Z_DIM).to(self.configuration.DEVICE)
 
             # Generate new fake data
-            label_hard, _ = self.generator(local_graph, voxel_graph, z)
             d_fake = self.discriminator(local_graph, voxel_graph, label_hard)
             g_loss_adv = torch.nn.functional.binary_cross_entropy(d_fake, torch.ones_like(d_fake))
 
             g_loss_label = torch.nn.functional.smooth_l1_loss(label_hard, voxel_graph.types_onehot)
             g_loss_label *= self.configuration.LAMBDA_LABEL
 
-            label_ratio = label_hard.sum(dim=0) / voxel_graph.num_nodes
-            label_ratio_predicted = (label_hard * label_ratio.unsqueeze(0)).sum(dim=1, keepdim=True)
-            g_loss_ratio = torch.nn.functional.l1_loss(label_ratio_predicted, voxel_graph.node_ratio)
+            label_ratio_g = label_hard.sum(dim=0) / voxel_graph.num_nodes
+            label_ratio = voxel_graph.types_onehot.sum(dim=0) / voxel_graph.num_nodes
+
+            g_loss_ratio = torch.nn.functional.l1_loss(label_ratio_g, label_ratio)
             g_loss_ratio *= self.configuration.LAMBDA_RATIO
 
-            g_loss = g_loss_adv + g_loss_ratio + g_loss_label
+            g_loss_ratio_voids = torch.nn.functional.l1_loss(label_ratio_g[-2:], label_ratio[-2:])
+            g_loss_ratio_voids *= self.configuration.LAMBDA_RATIO_VOID
+            g_loss = g_loss_adv + g_loss_ratio + g_loss_label + g_loss_ratio_voids
 
             g_loss.backward()
             self.optimizer_generator.step()
@@ -247,24 +327,16 @@ class Trainer(TrainerHelper):
                     label_hard,
                     local_graph,
                     voxel_graph,
+                    d_loss_real.item(),
+                    d_loss_fake.item(),
                     d_loss.item(),
                     g_loss.item(),
+                    g_loss_adv.item(),
+                    g_loss_label.item(),
+                    g_loss_ratio.item(),
+                    g_loss_ratio_voids.item(),
                     epoch,
                 )
-
-                print(
-                    f"""
-                    d_loss_real: {d_loss_real.item()},
-                    d_loss_fake: {d_loss_fake.item()},
-                    d_loss: {d_loss.item()},
-                    g_loss: {g_loss.item()},
-                    g_loss_adv: {g_loss_adv.item()},
-                    g_loss_label: {g_loss_label.item()},
-                    g_loss_ratio: {g_loss_ratio.item()},
-                    """
-                )
-
-        self.generator_scheduler.step(torch.tensor(g_loss_total).mean())
 
     @torch.no_grad()
     def _validate_each_epoch(self):
@@ -275,16 +347,17 @@ class Trainer(TrainerHelper):
         return 0, 0
 
     def train(self):
-        os.makedirs(self.configuration.LOG_DIR, exist_ok=True)
-
-        print("Starting training with single sample for sanity check...")
-        print(f"Device: {self.configuration.DEVICE}")
+        config_dict = self.configuration.to_dict()
+        for key, value in config_dict.items():
+            self.summary_writer.add_text(f"configuration/{key}", str(value))
 
         for epoch in range(1, self.configuration.EPOCHS + 1):
             self.generator.train()
             self.discriminator.train()
 
             self._train_each_epoch(epoch)
+
+            print(f"Epoch {epoch}/{self.configuration.EPOCHS}")
 
             # print(f"\nEpoch {epoch}/{self.configuration.EPOCHS}")
             # print(f"Generator Loss: {g_loss:.4f}")
@@ -299,13 +372,8 @@ if __name__ == "__main__":
     generator = VoxelGNNGenerator(configuration)
     discriminator = VoxelGNNDiscriminator(configuration)
 
-    optimizer_generator = torch.optim.Adam(
-        generator.parameters(), lr=configuration.LEARNING_RATE_GENERATOR, betas=configuration.BETAS
-    )
-
-    optimizer_discriminator = torch.optim.Adam(
-        discriminator.parameters(), lr=configuration.LEARNING_RATE_DISCRIMINATOR, betas=configuration.BETAS
-    )
+    optimizer_generator = torch.optim.Adam(generator.parameters(), lr=configuration.LEARNING_RATE_GENERATOR)
+    optimizer_discriminator = torch.optim.Adam(discriminator.parameters(), lr=configuration.LEARNING_RATE_DISCRIMINATOR)
 
     trainer = Trainer(
         generator=generator,

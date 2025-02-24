@@ -50,7 +50,7 @@ class DataConfiguration:
 
 class ModelConfiguration:
     NUM_WORKERS = 3
-    EPOCHS = 3000
+    EPOCHS = 5000
     SEED = 777
 
     TRAIN_SPLIT_RATIO = 0.70
@@ -62,16 +62,16 @@ class ModelConfiguration:
     BATCH_SIZE = 32
     SANITY_CHECKING = True
     if SANITY_CHECKING:
-        DATA_POINT = 777
+        DATA_POINT = 1004
         BATCH_SIZE = 1
 
     N_CRITIC = 5
     LEARNING_RATE_GENERATOR = 0.0002
     LEARNING_RATE_DISCRIMINATOR = 0.0002
-    BETAS = (0.5, 0.999)
 
     LAMBDA_GP = 10.0
     LAMBDA_RATIO = 1.0
+    LAMBDA_RATIO_VOID = 0.0
     LAMBDA_LABEL = 1.0
 
     DEVICE = "cuda"
@@ -79,7 +79,7 @@ class ModelConfiguration:
     LOG_DIR = os.path.abspath(os.path.join(__file__, "../../runs"))
 
     GENERATOR_CONV_TYPE = "GATCONV"
-    GENERATOR_ENCODER_REPEAT = 5
+    GENERATOR_ENCODER_REPEAT = 7
     GENERATOR_HIDDEN_DIM = 128
 
     DISCRIMINATOR_CONV_TYPE = "GATCONV"

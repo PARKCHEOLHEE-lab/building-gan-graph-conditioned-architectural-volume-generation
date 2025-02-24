@@ -41,7 +41,7 @@ class VoxelGNNGenerator(nn.Module):
         for _ in range(configuration.GENERATOR_ENCODER_REPEAT):
             self.encoder += [
                 (conv(out_channels, out_channels // 2), f"{configuration.INPUT_ARGS} -> x"),
-                tgnn.norm.LayerNorm(out_channels // 2),
+                tgnn.norm.GraphNorm(out_channels // 2),
                 nn.ReLU(True),
                 nn.Dropout(0.2),
             ]
@@ -51,7 +51,7 @@ class VoxelGNNGenerator(nn.Module):
         for _ in range(configuration.GENERATOR_ENCODER_REPEAT):
             self.encoder += [
                 (conv(out_channels, out_channels * 2), f"{configuration.INPUT_ARGS} -> x"),
-                tgnn.norm.LayerNorm(out_channels * 2),
+                tgnn.norm.GraphNorm(out_channels * 2),
                 nn.ReLU(True),
                 nn.Dropout(0.2),
             ]
@@ -129,7 +129,7 @@ class VoxelGNNDiscriminator(nn.Module):
         for _ in range(configuration.DISCRIMINATOR_ENCODER_REPEAT):
             self.encoder += [
                 (conv(out_channels, out_channels // 2), f"{configuration.INPUT_ARGS} -> x"),
-                tgnn.norm.LayerNorm(out_channels // 2),
+                tgnn.norm.GraphNorm(out_channels // 2),
                 nn.ReLU(True),
                 nn.Dropout(0.2),
             ]
@@ -139,7 +139,7 @@ class VoxelGNNDiscriminator(nn.Module):
         for _ in range(configuration.DISCRIMINATOR_ENCODER_REPEAT):
             self.encoder += [
                 (conv(out_channels, out_channels * 2), f"{configuration.INPUT_ARGS} -> x"),
-                tgnn.norm.LayerNorm(out_channels * 2),
+                tgnn.norm.GraphNorm(out_channels * 2),
                 nn.ReLU(True),
                 nn.Dropout(0.2),
             ]
