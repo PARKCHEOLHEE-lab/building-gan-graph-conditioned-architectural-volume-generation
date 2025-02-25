@@ -50,7 +50,7 @@ class DataConfiguration:
 
 class ModelConfiguration:
     NUM_WORKERS = 3
-    EPOCHS = 5000
+    EPOCHS = 3000
     SEED = 777
 
     TRAIN_SPLIT_RATIO = 0.70

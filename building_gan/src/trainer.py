@@ -257,6 +257,7 @@ class Trainer(TrainerHelper):
         self.summary_writer.add_scalar("g_loss_label", g_loss_label, epoch)
         self.summary_writer.add_scalar("g_loss_ratio", g_loss_ratio, epoch)
         self.summary_writer.add_scalar("g_loss_ratio_voids", g_loss_ratio_voids, epoch)
+        self.summary_writer.add_scalar("accuracy", accuracy, epoch)
 
         # fig.savefig(os.path.join(self.summary_writer.log_dir, f"epoch_{epoch}.png"))
 
@@ -372,8 +373,10 @@ if __name__ == "__main__":
     generator = VoxelGNNGenerator(configuration)
     discriminator = VoxelGNNDiscriminator(configuration)
 
-    optimizer_generator = torch.optim.Adam(generator.parameters(), lr=configuration.LEARNING_RATE_GENERATOR)
-    optimizer_discriminator = torch.optim.Adam(discriminator.parameters(), lr=configuration.LEARNING_RATE_DISCRIMINATOR)
+    optimizer_generator = torch.optim.AdamW(generator.parameters(), lr=configuration.LEARNING_RATE_GENERATOR)
+    optimizer_discriminator = torch.optim.AdamW(
+        discriminator.parameters(), lr=configuration.LEARNING_RATE_DISCRIMINATOR
+    )
 
     trainer = Trainer(
         generator=generator,

@@ -69,12 +69,16 @@ class VoxelGNNGenerator(nn.Module):
                 + configuration.GENERATOR_HIDDEN_DIM,
                 configuration.GENERATOR_HIDDEN_DIM,
             ),
+            nn.BatchNorm1d(configuration.GENERATOR_HIDDEN_DIM),
             nn.ReLU(True),
             nn.Linear(configuration.GENERATOR_HIDDEN_DIM, configuration.GENERATOR_HIDDEN_DIM // 2),
+            nn.BatchNorm1d(configuration.GENERATOR_HIDDEN_DIM // 2),
             nn.ReLU(True),
             nn.Linear(configuration.GENERATOR_HIDDEN_DIM // 2, configuration.GENERATOR_HIDDEN_DIM // 4),
+            nn.BatchNorm1d(configuration.GENERATOR_HIDDEN_DIM // 4),
             nn.ReLU(True),
             nn.Linear(configuration.GENERATOR_HIDDEN_DIM // 4, configuration.GENERATOR_HIDDEN_DIM // 8),
+            nn.BatchNorm1d(configuration.GENERATOR_HIDDEN_DIM // 8),
             nn.ReLU(True),
             nn.Linear(configuration.GENERATOR_HIDDEN_DIM // 8, configuration.NUM_CLASSES),
         )
@@ -90,7 +94,7 @@ class VoxelGNNGenerator(nn.Module):
 
         decoded = self.decoder(encoded)
 
-        label_soft = torch.nn.functional.gumbel_softmax(decoded, tau=0.5)
+        label_soft = torch.nn.functional.gumbel_softmax(decoded, tau=1.0)
         label_hard = torch.zeros_like(label_soft)
         label_hard.scatter_(-1, label_soft.argmax(dim=1, keepdim=True), 1.0)
         label_hard = label_hard - label_soft.detach() + label_soft
