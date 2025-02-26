@@ -50,7 +50,7 @@ class DataConfiguration:
 
 class ModelConfiguration:
     NUM_WORKERS = 3
-    EPOCHS = 3000
+    EPOCHS = 5000
     SEED = 777
 
     TRAIN_SPLIT_RATIO = 0.70
@@ -72,7 +72,7 @@ class ModelConfiguration:
     LAMBDA_GP = 10.0
     LAMBDA_RATIO = 1.0
     LAMBDA_RATIO_VOID = 0.0
-    LAMBDA_LABEL = 1.0
+    LAMBDA_LABEL = 10.0
 
     DEVICE = "cuda"
 
