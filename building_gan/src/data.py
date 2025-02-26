@@ -128,7 +128,9 @@ class GraphDataset(Dataset):
             )
 
     def __getitem__(self, i):
-        return self.local_graph_data[i], self.voxel_graph_data[i]
+        return self.local_graph_data[i].to(self.configuration.DEVICE), self.voxel_graph_data[i].to(
+            self.configuration.DEVICE
+        )
 
     def __len__(self):
         return len(self.local_graph_data)
