@@ -6,6 +6,7 @@ import torch
 import datetime
 import matplotlib.pyplot as plt
 
+from tqdm import tqdm
 from typing import Hashable, Callable
 from matplotlib.patches import Patch
 from mpl_toolkits.mplot3d.art3d import Poly3DCollection
@@ -98,6 +99,11 @@ class Trainer(TrainerHelper):
             self.optimizer_generator, patience=5, verbose=True, factor=0.1
         )
 
+        self.has_multiple_gpus = not self.sanity_checking and torch.cuda.device_count() > 1
+        if self.has_multiple_gpus:
+            self.generator = torch.nn.DataParallel(self.generator)
+            self.discriminator = torch.nn.DataParallel(self.discriminator)
+
         self.summary_writer = SummaryWriter(
             log_dir=os.path.join(
                 self.configuration.LOG_DIR,
@@ -105,48 +111,40 @@ class Trainer(TrainerHelper):
             )
         )
 
-    def visualize(self):
-        return
-
     @torch.no_grad()
     def _visualize_one(
         self,
-        label_hard,
         local_graph,
         voxel_graph,
-        d_loss_real,
-        d_loss_fake,
-        d_loss,
-        g_loss,
-        g_loss_adv,
-        g_loss_label,
-        g_loss_ratio,
-        g_loss_ratio_voids,
         epoch,
+        show=False,
     ):
         self.generator.eval()
+        self.discriminator.eval()
 
-        clear_output(wait=True)
+        z = torch.randn(voxel_graph.num_nodes, self.configuration.Z_DIM).to(self.configuration.DEVICE)
+        label_hard, _ = self.generator(local_graph, voxel_graph, z)
 
         voxel_types_generated = label_hard.argmax(dim=1)
-
         accuracy = (voxel_types_generated == voxel_graph.type).float().mean().item()
 
         fig = plt.figure(figsize=(20, 5))
 
-        ax_graph_local = fig.add_subplot(1, 6, 1, projection="3d")
-        ax_voxel_grid = fig.add_subplot(1, 6, 2, projection="3d")
-        ax_voxel_groundtruth = fig.add_subplot(1, 6, 3, projection="3d")
-        ax_voxel_generated = fig.add_subplot(1, 6, 4, projection="3d")
-        ax_legend = fig.add_subplot(1, 6, 5, projection="3d")
-        ax_loss = fig.add_subplot(1, 6, 6, projection="3d")
+        ax_graph_local = fig.add_subplot(1, 5, 1, projection="3d")
+        ax_voxel_grid = fig.add_subplot(1, 5, 2, projection="3d")
+        ax_voxel_groundtruth = fig.add_subplot(1, 5, 3, projection="3d")
+        ax_voxel_generated = fig.add_subplot(1, 5, 4, projection="3d")
+        ax_legend = fig.add_subplot(1, 5, 5, projection="3d")
 
         ax_graph_local.set_title("Graph\n")
         ax_voxel_grid.set_title(f"Irregular Voxel Grid (nodes: {voxel_graph.num_nodes})\n")
         ax_voxel_groundtruth.set_title("Ground Truth\n")
         ax_voxel_generated.set_title(f"{epoch}, Generated, (acc: {accuracy:.4f})\n")
         ax_legend.set_title("Legend\n")
-        ax_loss.set_title("Losses\n")
+
+        local_graph = local_graph.to("cpu")
+        voxel_graph = voxel_graph.to("cpu")
+        voxel_types_generated = voxel_types_generated.to("cpu")
 
         for src, trg in local_graph.edge_index.t():
             z_src, y_src, x_src = local_graph.center[src].tolist()
@@ -219,26 +217,7 @@ class Trainer(TrainerHelper):
         max_coords = torch.max(voxel_graph.coordinate + voxel_graph.dimension, dim=0).values.tolist()
         min_coords = torch.min(voxel_graph.coordinate, dim=0).values.tolist()
 
-        ax_loss.text(
-            max_coords[0] / 2,
-            max_coords[1] / 2,
-            max_coords[2] / 2,
-            s=f"""
-            d_loss_real: {d_loss_real:.4f}
-            d_loss_fake: {d_loss_fake:.4f}
-            d_loss: {d_loss:.4f}
-            g_loss: {g_loss:.4f}
-            g_loss_adv: {g_loss_adv:.4f}
-            g_loss_label: {g_loss_label:.4f}
-            g_loss_ratio: {g_loss_ratio:.4f}
-            g_loss_ratio_voids: {g_loss_ratio_voids:.4f}
-            """,
-            fontsize=7,
-            ha="center",
-            va="center",
-        )
-
-        for ax in [ax_graph_local, ax_voxel_grid, ax_voxel_groundtruth, ax_voxel_generated, ax_legend, ax_loss]:
+        for ax in [ax_graph_local, ax_voxel_grid, ax_voxel_groundtruth, ax_voxel_generated, ax_legend]:
             ax.set_box_aspect([1, 1, 1])
             ax.set_proj_type("ortho")
             ax._axis3don = False
@@ -246,40 +225,36 @@ class Trainer(TrainerHelper):
             ax.set_ylim(min_coords[1], max_coords[1])
             ax.set_zlim(min_coords[0], max_coords[0])
 
-        # plt.show()
-
-        self.summary_writer.add_figure(f"epoch_{epoch}", fig, epoch)
-        self.summary_writer.add_scalar("g_loss", g_loss, epoch)
-        self.summary_writer.add_scalar("d_loss", d_loss, epoch)
-        self.summary_writer.add_scalar("d_loss_real", d_loss_real, epoch)
-        self.summary_writer.add_scalar("d_loss_fake", d_loss_fake, epoch)
-        self.summary_writer.add_scalar("g_loss_adv", g_loss_adv, epoch)
-        self.summary_writer.add_scalar("g_loss_label", g_loss_label, epoch)
-        self.summary_writer.add_scalar("g_loss_ratio", g_loss_ratio, epoch)
-        self.summary_writer.add_scalar("g_loss_ratio_voids", g_loss_ratio_voids, epoch)
-        self.summary_writer.add_scalar("accuracy", accuracy, epoch)
-
-        # fig.savefig(os.path.join(self.summary_writer.log_dir, f"epoch_{epoch}.png"))
+        if show:
+            plt.show()
 
         self.generator.train()
+        self.discriminator.train()
 
-    @TrainerHelper.runtime_calculator
-    def _train_each_epoch(self, epoch):
-        g_loss_total = []
-        d_loss_total = []
+        return fig
+
+    # @TrainerHelper.runtime_calculator
+    def _train_each_epoch(self):
+        torch.cuda.empty_cache()
+
+        g_loss_total_train = []
+        d_loss_total_train = []
+        accuracy_total_train = []
 
         for _, (local_graph, voxel_graph) in enumerate(self.dataloaders.train_dataloader):
+            # Set device
             local_graph = local_graph.to(self.configuration.DEVICE)
             voxel_graph = voxel_graph.to(self.configuration.DEVICE)
 
-            # 1. Train Discriminator
+            # Train discriminator
             for _ in range(self.configuration.N_CRITIC):
                 self.optimizer_discriminator.zero_grad()
 
+                # Generate fake data
                 z = torch.randn(voxel_graph.num_nodes, self.configuration.Z_DIM).to(self.configuration.DEVICE)
                 label_hard, label_soft = self.generator(local_graph, voxel_graph, z)
 
-                # Discriminator loss
+                # Compute discriminator loss
                 d_real = self.discriminator(local_graph, voxel_graph, voxel_graph.types_onehot)
                 d_fake = self.discriminator(local_graph, voxel_graph, label_hard.detach())
 
@@ -294,7 +269,7 @@ class Trainer(TrainerHelper):
                 d_loss.backward(retain_graph=True)
                 self.optimizer_discriminator.step()
 
-                d_loss_total.append(d_loss.item())
+                d_loss_total_train.append(d_loss.item())
 
             # 2. Train Generator
             self.optimizer_generator.zero_grad()
@@ -304,7 +279,7 @@ class Trainer(TrainerHelper):
             d_fake = self.discriminator(local_graph, voxel_graph, label_hard)
             g_loss_adv = torch.nn.functional.binary_cross_entropy(d_fake, torch.ones_like(d_fake))
 
-            g_loss_label = torch.nn.functional.smooth_l1_loss(label_hard, voxel_graph.types_onehot)
+            g_loss_label = torch.nn.functional.cross_entropy(label_soft, voxel_graph.types_onehot.float())
             g_loss_label *= self.configuration.LAMBDA_LABEL
 
             label_ratio_g = label_hard.sum(dim=0) / voxel_graph.num_nodes
@@ -316,53 +291,117 @@ class Trainer(TrainerHelper):
             g_loss_ratio_voids = torch.nn.functional.l1_loss(label_ratio_g[-2:], label_ratio[-2:])
             g_loss_ratio_voids *= self.configuration.LAMBDA_RATIO_VOID
             g_loss = g_loss_adv + g_loss_ratio + g_loss_label + g_loss_ratio_voids
+            g_loss_total_train.append(g_loss.item())
 
             g_loss.backward()
             self.optimizer_generator.step()
 
-            g_loss_total.append(g_loss.item())
+            voxel_types_generated = label_hard.argmax(dim=1)
+            accuracy = (voxel_types_generated == voxel_graph.type).float().mean().item()
+            accuracy_total_train.append(accuracy)
 
-            if self.sanity_checking:
-                # if self.sanity_checking and (epoch % 10 == 0 or epoch == 1):
-                self._visualize_one(
-                    label_hard,
-                    local_graph,
-                    voxel_graph,
-                    d_loss_real.item(),
-                    d_loss_fake.item(),
-                    d_loss.item(),
-                    g_loss.item(),
-                    g_loss_adv.item(),
-                    g_loss_label.item(),
-                    g_loss_ratio.item(),
-                    g_loss_ratio_voids.item(),
-                    epoch,
-                )
+        g_loss_mean_train = torch.tensor(g_loss_total_train).mean().item()
+        d_loss_mean_train = torch.tensor(d_loss_total_train).mean().item()
+        accuracy_mean_train = torch.tensor(accuracy_total_train).mean().item()
+
+        return g_loss_mean_train, d_loss_mean_train, accuracy_mean_train
 
     @torch.no_grad()
     def _validate_each_epoch(self):
-        # generator: Generator,
-        # discriminator: Discriminator,
-        # validation_dataloader: DataLoader,
+        if self.sanity_checking:
+            return 0, 0
 
-        return 0, 0
+        self.generator.eval()
+        self.discriminator.eval()
+
+        g_loss_total_validation = []
+        accuracy_total_validation = []
+
+        for _, (local_graph, voxel_graph) in enumerate(self.dataloaders.validation_dataloader):
+            local_graph = local_graph.to(self.configuration.DEVICE)
+            voxel_graph = voxel_graph.to(self.configuration.DEVICE)
+
+            z = torch.randn(voxel_graph.num_nodes, self.configuration.Z_DIM).to(self.configuration.DEVICE)
+            label_hard, label_soft = self.generator(local_graph, voxel_graph, z)
+
+            d_fake = self.discriminator(local_graph, voxel_graph, label_hard)
+            g_loss_adv = torch.nn.functional.binary_cross_entropy(d_fake, torch.ones_like(d_fake))
+
+            g_loss_label = torch.nn.functional.cross_entropy(label_soft, voxel_graph.types_onehot.float())
+            g_loss_label *= self.configuration.LAMBDA_LABEL
+
+            label_ratio_g = label_hard.sum(dim=0) / voxel_graph.num_nodes
+            label_ratio = voxel_graph.types_onehot.sum(dim=0) / voxel_graph.num_nodes
+
+            g_loss_ratio = torch.nn.functional.l1_loss(label_ratio_g, label_ratio)
+            g_loss_ratio *= self.configuration.LAMBDA_RATIO
+
+            g_loss_ratio_voids = torch.nn.functional.l1_loss(label_ratio_g[-2:], label_ratio[-2:])
+            g_loss_ratio_voids *= self.configuration.LAMBDA_RATIO_VOID
+            g_loss = g_loss_adv + g_loss_ratio + g_loss_label + g_loss_ratio_voids
+            g_loss_total_validation.append(g_loss.item())
+
+            voxel_types_generated = label_hard.argmax(dim=1)
+            accuracy = (voxel_types_generated == voxel_graph.type).float().mean().item()
+            accuracy_total_validation.append(accuracy)
+
+        g_loss_mean_validation = torch.tensor(g_loss_total_validation).mean().item()
+        accuracy_mean_validation = torch.tensor(accuracy_total_validation).mean().item()
+
+        self.generator.train()
+        self.discriminator.train()
+
+        return g_loss_mean_validation, accuracy_mean_validation
 
     def train(self):
         config_dict = self.configuration.to_dict()
         for key, value in config_dict.items():
             self.summary_writer.add_text(f"configuration/{key}", str(value))
 
-        for epoch in range(1, self.configuration.EPOCHS + 1):
-            self.generator.train()
-            self.discriminator.train()
+        epoch_start = 1
+        epoch_end = self.configuration.EPOCHS + 1
+        best_accuracy = 0
 
-            self._train_each_epoch(epoch)
+        clear_output(wait=True)
 
-            print(f"Epoch {epoch}/{self.configuration.EPOCHS}")
+        for epoch in tqdm(range(epoch_start, epoch_end), desc="Training..."):
+            # Train each epoch
+            g_loss_mean_train, d_loss_mean_train, accuracy_mean_train = self._train_each_epoch()
 
-            # print(f"\nEpoch {epoch}/{self.configuration.EPOCHS}")
-            # print(f"Generator Loss: {g_loss:.4f}")
-            # print(f"Discriminator Loss: {d_loss:.4f}")
+            # Validate each epoch
+            g_loss_mean_validation, accuracy_mean_validation = self._validate_each_epoch()
+
+            # Log to tensorboard
+            self.summary_writer.add_scalar("g_loss_train", g_loss_mean_train, epoch)
+            self.summary_writer.add_scalar("d_loss_train", d_loss_mean_train, epoch)
+            self.summary_writer.add_scalar("g_loss_validation", g_loss_mean_validation, epoch)
+            self.summary_writer.add_scalar("accuracy_train", accuracy_mean_train, epoch)
+            self.summary_writer.add_scalar("accuracy_validation", accuracy_mean_validation, epoch)
+
+            if self.sanity_checking:
+                fig = self._visualize_one(
+                    self.dataloaders.train_dataloader.dataset[0][0].to(self.configuration.DEVICE),
+                    self.dataloaders.train_dataloader.dataset[0][1].to(self.configuration.DEVICE),
+                    epoch,
+                    show=epoch == 1 or epoch % 1000 == 0,
+                )
+
+                self.summary_writer.add_figure(f"epoch_{epoch}", fig, epoch)
+
+            else:
+                current_accuracy = accuracy_mean_train * 0.5 + accuracy_mean_validation
+                if best_accuracy < current_accuracy:
+                    best_accuracy = current_accuracy
+
+                    torch.save(
+                        self.generator.state_dict(),
+                        os.path.join(self.configuration.CHECKPOINT_DIR, "generator_best.pth"),
+                    )
+
+                    torch.save(
+                        self.discriminator.state_dict(),
+                        os.path.join(self.configuration.CHECKPOINT_DIR, "discriminator_best.pth"),
+                    )
 
 
 if __name__ == "__main__":
