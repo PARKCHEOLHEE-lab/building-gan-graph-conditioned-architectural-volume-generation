@@ -59,11 +59,8 @@ class ModelConfiguration:
     SPLIT_RATIOS = [TRAIN_SPLIT_RATIO, VALIDATION_SPLIT_RATIO, TEST_SPLIT_RATIO]
 
     DATA_POINT = None
-    BATCH_SIZE = 32
-    SANITY_CHECKING = True
-    if SANITY_CHECKING:
-        DATA_POINT = 1004
-        BATCH_SIZE = 1
+    DATA_SLICER = 500
+    BATCH_SIZE = 64
 
     N_CRITIC = 5
     LEARNING_RATE_GENERATOR = 0.0002
@@ -97,8 +94,12 @@ class ModelConfiguration:
 class Configuration(ProgramMap, DataConfiguration, ModelConfiguration):
     """Configuration for the plan generator"""
 
-    def __init__(self):
-        pass
+    def __init__(self, sanity_checking: bool = False):
+        self.SANITY_CHECKING = sanity_checking
+        if sanity_checking:
+            self.BATCH_SIZE = 1
+            self.DATA_SLICER = int(1e10)
+            self.DATA_POINT = 1004
 
     def to_dict(self, class_name: List[str] = ["ProgramMap", "DataConfiguration", "ModelConfiguration"]):
         config_dict = {
