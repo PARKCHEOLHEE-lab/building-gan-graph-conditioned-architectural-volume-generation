@@ -86,6 +86,9 @@ class GraphDataset(Dataset):
             if d.endswith(configuration.VOXEL_DATA_SUFFIX)
         ]
 
+        self.voxel_graph_data_files = self.voxel_graph_data_files[: self.configuration.DATA_SLICER]
+        self.local_graph_data_files = self.local_graph_data_files[: self.configuration.DATA_SLICER]
+
         if self.configuration.SANITY_CHECKING:
             self.local_graph_data_files = [self.local_graph_data_files[self.configuration.DATA_POINT]]
             self.voxel_graph_data_files = [self.voxel_graph_data_files[self.configuration.DATA_POINT]]
@@ -128,9 +131,7 @@ class GraphDataset(Dataset):
             )
 
     def __getitem__(self, i):
-        return self.local_graph_data[i].to(self.configuration.DEVICE), self.voxel_graph_data[i].to(
-            self.configuration.DEVICE
-        )
+        return self.local_graph_data[i], self.voxel_graph_data[i]
 
     def __len__(self):
         return len(self.local_graph_data)
