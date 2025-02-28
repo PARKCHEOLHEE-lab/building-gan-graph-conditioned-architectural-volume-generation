@@ -394,12 +394,12 @@ class Trainer(TrainerHelper):
 
                     torch.save(
                         self.generator.state_dict(),
-                        os.path.join(self.log_dir, "voxel_gnn_generator.pth"),
+                        os.path.join(self.log_dir, "voxel_gnn_generator.pt"),
                     )
 
                     torch.save(
                         self.discriminator.state_dict(),
-                        os.path.join(self.log_dir, "voxel_gnn_discriminator.pth"),
+                        os.path.join(self.log_dir, "voxel_gnn_discriminator.pt"),
                     )
 
 
