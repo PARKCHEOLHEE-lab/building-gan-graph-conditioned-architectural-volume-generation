@@ -86,6 +86,7 @@ class Trainer(TrainerHelper):
         optimizer_generator: torch.optim.Optimizer,
         optimizer_discriminator: torch.optim.Optimizer,
         configuration: Configuration,
+        log_dir: str = None,
     ):
         self.generator = generator
         self.discriminator = discriminator
@@ -94,22 +95,20 @@ class Trainer(TrainerHelper):
         self.optimizer_discriminator = optimizer_discriminator
         self.configuration = configuration
         self.sanity_checking = self.configuration.SANITY_CHECKING
-
-        self.generator_scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(
-            self.optimizer_generator, patience=5, verbose=True, factor=0.1
-        )
+        self.log_dir = log_dir
 
         self.has_multiple_gpus = not self.sanity_checking and torch.cuda.device_count() > 1
         if self.has_multiple_gpus:
             self.generator = torch.nn.DataParallel(self.generator)
             self.discriminator = torch.nn.DataParallel(self.discriminator)
 
-        self.summary_writer = SummaryWriter(
-            log_dir=os.path.join(
+        if self.log_dir is None:
+            self.log_dir = os.path.join(
                 self.configuration.LOG_DIR,
                 datetime.datetime.now(pytz.timezone("Asia/Seoul")).strftime("%m-%d-%Y__%H-%M-%S"),
             )
-        )
+
+        self.summary_writer = SummaryWriter(log_dir=self.log_dir)
 
     @torch.no_grad()
     def _visualize_one(
@@ -395,12 +394,12 @@ class Trainer(TrainerHelper):
 
                     torch.save(
                         self.generator.state_dict(),
-                        os.path.join(self.configuration.CHECKPOINT_DIR, "generator_best.pth"),
+                        os.path.join(self.log_dir, "voxel_gnn_generator.pth"),
                     )
 
                     torch.save(
                         self.discriminator.state_dict(),
-                        os.path.join(self.configuration.CHECKPOINT_DIR, "discriminator_best.pth"),
+                        os.path.join(self.log_dir, "voxel_gnn_discriminator.pth"),
                     )
 
 
