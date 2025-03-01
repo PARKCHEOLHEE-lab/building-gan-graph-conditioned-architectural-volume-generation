@@ -1,60 +1,30 @@
 import os
+import io
 import sys
 import time
 import pytz
 import torch
 import datetime
+import numpy as np
 import matplotlib.pyplot as plt
 
+from PIL import Image
 from tqdm import tqdm
-from typing import Hashable, Callable
 from matplotlib.patches import Patch
-from mpl_toolkits.mplot3d.art3d import Poly3DCollection
-from torch_geometric.data import Batch
+from typing import Hashable, Callable
 from IPython.display import clear_output
 from torch.utils.tensorboard import SummaryWriter
+from mpl_toolkits.mplot3d.art3d import Poly3DCollection
 
 if os.path.abspath(os.path.join(os.path.dirname(__file__), "../../")) not in sys.path:
     sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), "../../")))
 
 from building_gan.src.config import Configuration
 from building_gan.src.data import GraphDataLoaders
-from building_gan.src.models import VoxelGNNGenerator, VoxelGNNDiscriminator
+from building_gan.src.models import VoxelGNNGenerator, VoxelGNNDiscriminator, compute_gradient_penalty
 
 
 class TrainerHelper:
-    @staticmethod
-    def compute_gradient_penalty(
-        discriminator: VoxelGNNDiscriminator,
-        local_graph: Batch,
-        voxel_graph: Batch,
-        label_soft: Batch,
-        lambda_gp: float,
-    ):
-        e = torch.rand(voxel_graph.types_onehot.shape[0], 1)
-        e = e.to(label_soft.device)
-
-        interpolated = (e * voxel_graph.types_onehot + ((1 - e) * label_soft)).requires_grad_(True)
-        interpolated = interpolated.to(label_soft.device)
-
-        interpolated_hard = torch.zeros_like(interpolated)
-        interpolated_hard.scatter_(-1, interpolated.argmax(dim=1, keepdim=True), 1.0)
-
-        d_loss_interpolated = discriminator(local_graph, voxel_graph, interpolated)
-
-        gradients = torch.autograd.grad(
-            outputs=d_loss_interpolated,
-            inputs=interpolated,
-            grad_outputs=torch.ones_like(d_loss_interpolated).to(label_soft.device),
-            create_graph=True,
-            retain_graph=True,
-            only_inputs=True,
-        )[0]
-
-        gradient_penalty = ((gradients.norm(dim=1) - 1) ** 2).mean() * lambda_gp
-
-        return gradient_penalty
-
     @staticmethod
     def runtime_calculator(func: Callable) -> Callable:
         """A decorator function for measuring the runtime of another function.
@@ -76,40 +46,6 @@ class TrainerHelper:
 
         return wrapper
 
-
-class Trainer(TrainerHelper):
-    def __init__(
-        self,
-        generator: VoxelGNNGenerator,
-        discriminator: VoxelGNNDiscriminator,
-        dataloaders: GraphDataLoaders,
-        optimizer_generator: torch.optim.Optimizer,
-        optimizer_discriminator: torch.optim.Optimizer,
-        configuration: Configuration,
-        log_dir: str = None,
-    ):
-        self.generator = generator
-        self.discriminator = discriminator
-        self.dataloaders = dataloaders
-        self.optimizer_generator = optimizer_generator
-        self.optimizer_discriminator = optimizer_discriminator
-        self.configuration = configuration
-        self.sanity_checking = self.configuration.SANITY_CHECKING
-        self.log_dir = log_dir
-
-        self.has_multiple_gpus = not self.sanity_checking and torch.cuda.device_count() > 1
-        if self.has_multiple_gpus:
-            self.generator = torch.nn.DataParallel(self.generator)
-            self.discriminator = torch.nn.DataParallel(self.discriminator)
-
-        if self.log_dir is None:
-            self.log_dir = os.path.join(
-                self.configuration.LOG_DIR,
-                datetime.datetime.now(pytz.timezone("Asia/Seoul")).strftime("%m-%d-%Y__%H-%M-%S"),
-            )
-
-        self.summary_writer = SummaryWriter(log_dir=self.log_dir)
-
     @torch.no_grad()
     def _visualize_one(
         self,
@@ -117,10 +53,13 @@ class Trainer(TrainerHelper):
         voxel_graph,
         epoch,
         show=False,
+        title=None,
+        to_pil=False,
     ):
         self.generator.eval()
         self.discriminator.eval()
 
+        # generator 생성부분을 바깥으로 빼서 이미지만 저장하도록 수정
         z = torch.randn(voxel_graph.num_nodes, self.configuration.Z_DIM).to(self.configuration.DEVICE)
         label_hard, _ = self.generator(local_graph, voxel_graph, z)
 
@@ -128,6 +67,8 @@ class Trainer(TrainerHelper):
         accuracy = (voxel_types_generated == voxel_graph.type).float().mean().item()
 
         fig = plt.figure(figsize=(20, 5))
+        if title is not None:
+            fig.suptitle(title, fontsize=16)
 
         ax_graph_local = fig.add_subplot(1, 5, 1, projection="3d")
         ax_voxel_grid = fig.add_subplot(1, 5, 2, projection="3d")
@@ -227,12 +168,62 @@ class Trainer(TrainerHelper):
         if show:
             plt.show()
 
+        if to_pil:
+            buf = io.BytesIO()
+            fig.savefig(buf, format="png", bbox_inches="tight")
+            buf.seek(0)
+            fig = Image.open(buf)
+
         self.generator.train()
         self.discriminator.train()
 
         return fig
 
-    # @TrainerHelper.runtime_calculator
+    @runtime_calculator
+    def _evaluate_qualitatively(self, epoch, num_samples=2, to_tensor=False):
+        figs = []
+        train_random_indices = torch.randint(len(self.dataloaders.train_dataloader.dataset), size=(num_samples,))
+        validation_random_indices = torch.randint(
+            len(self.dataloaders.validation_dataloader.dataset), size=(num_samples,)
+        )
+
+        for ti, vi in zip(train_random_indices, validation_random_indices):
+            local_graph, voxel_graph = self.dataloaders.train_dataloader.dataset[ti]
+            local_graph_validation, voxel_graph_validation = self.dataloaders.validation_dataloader.dataset[vi]
+
+            train_fig = self._visualize_one(
+                local_graph.to(self.configuration.DEVICE),
+                voxel_graph.to(self.configuration.DEVICE),
+                epoch,
+                title=f"train at epoch: {epoch}\n",
+                to_pil=True,
+            )
+
+            validation_fig = self._visualize_one(
+                local_graph_validation.to(self.configuration.DEVICE),
+                voxel_graph_validation.to(self.configuration.DEVICE),
+                epoch,
+                title=f"validation at epoch: {epoch}\n",
+                to_pil=True,
+            )
+
+            figs.insert(0, train_fig)
+            figs.append(validation_fig)
+
+        width, height = figs[0].size
+        merged_fig = Image.new("RGB", (width, height * len(figs)))
+
+        for i, fig in enumerate(figs):
+            merged_fig.paste(fig, (0, i * height))
+
+        if to_tensor:
+            merged_fig = np.array(merged_fig)
+            merged_fig = np.transpose(merged_fig, (2, 0, 1))
+            merged_fig = torch.tensor(merged_fig, dtype=torch.uint8)
+
+        return merged_fig
+
+    @runtime_calculator
     def _train_each_epoch(self):
         torch.cuda.empty_cache()
 
@@ -260,7 +251,7 @@ class Trainer(TrainerHelper):
                 d_loss_real = torch.nn.functional.binary_cross_entropy(d_real, torch.ones_like(d_real))
                 d_loss_fake = torch.nn.functional.binary_cross_entropy(d_fake, torch.zeros_like(d_fake))
 
-                gp = self.compute_gradient_penalty(
+                gp = compute_gradient_penalty(
                     self.discriminator, local_graph, voxel_graph, label_soft, self.configuration.LAMBDA_GP
                 )
 
@@ -305,6 +296,7 @@ class Trainer(TrainerHelper):
 
         return g_loss_mean_train, d_loss_mean_train, accuracy_mean_train
 
+    @runtime_calculator
     @torch.no_grad()
     def _validate_each_epoch(self):
         if self.sanity_checking:
@@ -352,14 +344,65 @@ class Trainer(TrainerHelper):
 
         return g_loss_mean_validation, accuracy_mean_validation
 
+
+class Trainer(TrainerHelper):
+    def __init__(
+        self,
+        generator: VoxelGNNGenerator,
+        discriminator: VoxelGNNDiscriminator,
+        dataloaders: GraphDataLoaders,
+        optimizer_generator: torch.optim.Optimizer,
+        optimizer_discriminator: torch.optim.Optimizer,
+        configuration: Configuration,
+        log_dir: str = None,
+    ):
+        self.generator = generator
+        self.discriminator = discriminator
+        self.dataloaders = dataloaders
+        self.optimizer_generator = optimizer_generator
+        self.optimizer_discriminator = optimizer_discriminator
+        self.configuration = configuration
+        self.sanity_checking = self.configuration.SANITY_CHECKING
+        self.log_dir = log_dir
+
+        self.has_multiple_gpus = not self.sanity_checking and torch.cuda.device_count() > 1
+        if self.has_multiple_gpus:
+            self.generator = torch.nn.DataParallel(self.generator)
+            self.discriminator = torch.nn.DataParallel(self.discriminator)
+
+        if self.log_dir is None:
+            self.log_dir = os.path.join(
+                self.configuration.LOG_DIR,
+                datetime.datetime.now(pytz.timezone("Asia/Seoul")).strftime("%m-%d-%Y__%H-%M-%S"),
+            )
+
+        self.states = {
+            "epoch_start": 1,
+            "epoch_end": self.configuration.EPOCHS + 1,
+            "best_accuracy": 0,
+            "generator": None,
+            "discriminator": None,
+            "optimizer_generator": None,
+            "optimizer_discriminator": None,
+        }
+
+        if os.path.exists(os.path.join(self.log_dir, "states.pt")):
+            self.states = torch.load(os.path.join(self.log_dir, "states.pt"))
+            self.generator.load_state_dict(self.states["generator"])
+            self.discriminator.load_state_dict(self.states["discriminator"])
+            self.optimizer_generator.load_state_dict(self.states["optimizer_generator"])
+            self.optimizer_discriminator.load_state_dict(self.states["optimizer_discriminator"])
+
+        self.summary_writer = SummaryWriter(log_dir=self.log_dir)
+
     def train(self):
         config_dict = self.configuration.to_dict()
         for key, value in config_dict.items():
             self.summary_writer.add_text(f"configuration/{key}", str(value))
 
-        epoch_start = 1
-        epoch_end = self.configuration.EPOCHS + 1
-        best_accuracy = 0
+        epoch_start = self.states["epoch_start"]
+        epoch_end = self.states["epoch_end"]
+        best_accuracy = self.states["best_accuracy"]
 
         clear_output(wait=True)
 
@@ -378,29 +421,38 @@ class Trainer(TrainerHelper):
             self.summary_writer.add_scalar("accuracy_validation", accuracy_mean_validation, epoch)
 
             if self.sanity_checking:
-                fig = self._visualize_one(
+                # Visualize train data
+                train_fig = self._visualize_one(
                     self.dataloaders.train_dataloader.dataset[0][0].to(self.configuration.DEVICE),
                     self.dataloaders.train_dataloader.dataset[0][1].to(self.configuration.DEVICE),
                     epoch,
                     show=epoch == 1 or epoch % 1000 == 0,
                 )
 
-                self.summary_writer.add_figure(f"epoch_{epoch}", fig, epoch)
+                self.summary_writer.add_figure(f"epoch_{epoch}", train_fig, epoch)
 
             else:
+                # Save the best states
                 current_accuracy = accuracy_mean_train * 0.5 + accuracy_mean_validation
                 if best_accuracy < current_accuracy:
+                    print(f"Best accuracy updated: {best_accuracy} -> {current_accuracy}")
                     best_accuracy = current_accuracy
 
                     torch.save(
-                        self.generator.state_dict(),
-                        os.path.join(self.log_dir, "voxel_gnn_generator.pt"),
+                        {
+                            "epoch_start": epoch,
+                            "epoch_end": epoch_end,
+                            "best_accuracy": best_accuracy,
+                            "generator": self.generator.state_dict(),
+                            "discriminator": self.discriminator.state_dict(),
+                            "optimizer_generator": self.optimizer_generator.state_dict(),
+                            "optimizer_discriminator": self.optimizer_discriminator.state_dict(),
+                        },
+                        os.path.join(self.log_dir, "states.pt"),
                     )
 
-                    torch.save(
-                        self.discriminator.state_dict(),
-                        os.path.join(self.log_dir, "voxel_gnn_discriminator.pt"),
-                    )
+                merged_fig = self._evaluate_qualitatively(epoch, num_samples=2, to_tensor=True)
+                self.summary_writer.add_image(f"epoch_{epoch}", merged_fig, epoch)
 
 
 if __name__ == "__main__":
