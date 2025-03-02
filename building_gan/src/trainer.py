@@ -393,6 +393,8 @@ class Trainer(TrainerHelper):
             self.optimizer_generator.load_state_dict(self.states["optimizer_generator"])
             self.optimizer_discriminator.load_state_dict(self.states["optimizer_discriminator"])
 
+            print(f"Loaded states from {self.log_dir}")
+
         self.summary_writer = SummaryWriter(log_dir=self.log_dir)
 
     def train(self):
