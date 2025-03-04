@@ -262,7 +262,6 @@ class TrainerHelper:
 
             # 2. Train Generator
             self.optimizer_generator.zero_grad()
-            z = torch.randn(voxel_graph.num_nodes, self.configuration.Z_DIM).to(self.configuration.DEVICE)
 
             # Generate new fake data
             d_fake = self.discriminator(local_graph, voxel_graph, label_hard)
