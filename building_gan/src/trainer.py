@@ -1,5 +1,7 @@
 import os
+
 import io
+import gc
 import sys
 import time
 import pytz
@@ -225,6 +227,7 @@ class TrainerHelper:
     @runtime_calculator
     def _train_each_epoch(self):
         torch.cuda.empty_cache()
+        gc.collect()
 
         g_loss_total_train = []
         d_loss_total_train = []
@@ -362,11 +365,6 @@ class Trainer(TrainerHelper):
         self.configuration = configuration
         self.sanity_checking = self.configuration.SANITY_CHECKING
         self.log_dir = log_dir
-
-        self.has_multiple_gpus = not self.sanity_checking and torch.cuda.device_count() > 1
-        if self.has_multiple_gpus:
-            self.generator = torch.nn.DataParallel(self.generator)
-            self.discriminator = torch.nn.DataParallel(self.discriminator)
 
         if self.log_dir is None:
             self.log_dir = os.path.join(
