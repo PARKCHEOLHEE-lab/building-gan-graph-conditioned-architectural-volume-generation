@@ -60,7 +60,7 @@ class ModelConfiguration:
 
     DATA_POINT = None
     DATA_SLICER = int(1e10)
-    BATCH_SIZE = 64
+    BATCH_SIZE = 128
 
     N_CRITIC = 5
     LEARNING_RATE_GENERATOR = 0.0002
