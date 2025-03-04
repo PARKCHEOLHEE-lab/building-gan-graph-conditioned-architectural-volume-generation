@@ -59,7 +59,6 @@ class TrainerHelper:
         self.generator.eval()
         self.discriminator.eval()
 
-        # generator 생성부분을 바깥으로 빼서 이미지만 저장하도록 수정
         z = torch.randn(voxel_graph.num_nodes, self.configuration.Z_DIM).to(self.configuration.DEVICE)
         label_hard, _ = self.generator(local_graph, voxel_graph, z)
 
