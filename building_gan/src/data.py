@@ -80,11 +80,15 @@ class GraphDataset(Dataset):
             if d.endswith(configuration.LOCAL_DATA_SUFFIX)
         ]
 
+        self.local_graph_data_files.sort(key=lambda x: int(x.split("/")[-1].split("_")[0]))
+
         self.voxel_graph_data_files = [
             os.path.join(self.configuration.SAVE_DATA_PATH, d)
             for d in os.listdir(self.configuration.SAVE_DATA_PATH)
             if d.endswith(configuration.VOXEL_DATA_SUFFIX)
         ]
+
+        self.voxel_graph_data_files.sort(key=lambda x: int(x.split("/")[-1].split("_")[0]))
 
         self.voxel_graph_data_files = self.voxel_graph_data_files[: self.configuration.DATA_SLICER]
         self.local_graph_data_files = self.local_graph_data_files[: self.configuration.DATA_SLICER]
@@ -98,6 +102,8 @@ class GraphDataset(Dataset):
         self.local_graph_data = []
         self.voxel_graph_data = []
         for local_graph_file, voxel_graph_file in zip(self.local_graph_data_files, self.voxel_graph_data_files):
+            assert local_graph_file.split("/")[-1].split("_")[0] == voxel_graph_file.split("/")[-1].split("_")[0]
+
             local_graph = torch.load(local_graph_file)
             self.local_graph_data.append(
                 Data(
@@ -109,7 +115,7 @@ class GraphDataset(Dataset):
                     center=local_graph.local_graph_center,
                     type=local_graph.local_graph_types,
                     type_id=local_graph.local_graph_type_ids,
-                    data_number=local_graph.data_number,
+                    data_number=[local_graph.data_number] * local_graph.x.shape[0],
                     floor=local_graph.local_graph_floor_levels,
                 )
             )
@@ -126,7 +132,7 @@ class GraphDataset(Dataset):
                     dimension=voxel_graph.voxel_graph_node_dimension,
                     location=voxel_graph.voxel_graph_location,
                     node_ratio=voxel_graph.voxel_graph_node_ratio,
-                    data_number=voxel_graph.data_number,
+                    data_number=[voxel_graph.data_number] * voxel_graph.x.shape[0],
                 )
             )
 
