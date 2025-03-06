@@ -1,5 +1,4 @@
 import os
-
 import io
 import gc
 import sys
@@ -14,6 +13,7 @@ from PIL import Image
 from tqdm import tqdm
 from matplotlib.patches import Patch
 from typing import Hashable, Callable
+from torch_geometric.data import Batch
 from IPython.display import clear_output
 from torch.utils.tensorboard import SummaryWriter
 from mpl_toolkits.mplot3d.art3d import Poly3DCollection
@@ -190,7 +190,17 @@ class TrainerHelper:
 
         for ti, vi in zip(train_random_indices, validation_random_indices):
             local_graph, voxel_graph = self.dataloaders.train_dataloader.dataset[ti]
+            local_graph = Batch.from_data_list((local_graph,))
+            voxel_graph = Batch.from_data_list((voxel_graph,))
+
             local_graph_validation, voxel_graph_validation = self.dataloaders.validation_dataloader.dataset[vi]
+            local_graph_validation = Batch.from_data_list((local_graph_validation,))
+            voxel_graph_validation = Batch.from_data_list((voxel_graph_validation,))
+
+            assert [set(d) for d in local_graph.data_number] == [set(d) for d in voxel_graph.data_number]
+            assert [set(d) for d in local_graph_validation.data_number] == [
+                set(d) for d in voxel_graph_validation.data_number
+            ]
 
             train_fig = self._visualize_one(
                 local_graph.to(self.configuration.DEVICE),
@@ -233,15 +243,17 @@ class TrainerHelper:
         d_loss_total_train = []
         accuracy_total_train = []
 
+        accumulation_step = 1
+
         for _, (local_graph, voxel_graph) in enumerate(self.dataloaders.train_dataloader):
             # Set device
             local_graph = local_graph.to(self.configuration.DEVICE)
             voxel_graph = voxel_graph.to(self.configuration.DEVICE)
 
+            assert [set(d) for d in local_graph.data_number] == [set(d) for d in voxel_graph.data_number]
+
             # Train discriminator
             for _ in range(self.configuration.N_CRITIC):
-                self.optimizer_discriminator.zero_grad()
-
                 # Generate fake data
                 z = torch.randn(voxel_graph.num_nodes, self.configuration.Z_DIM).to(self.configuration.DEVICE)
                 label_hard, label_soft = self.generator(local_graph, voxel_graph, z)
@@ -258,15 +270,16 @@ class TrainerHelper:
                 )
 
                 d_loss = d_loss_fake + d_loss_real + gp
+                d_loss /= self.configuration.ACCUMULATION_STEPS
                 d_loss.backward(retain_graph=True)
-                self.optimizer_discriminator.step()
 
-                d_loss_total_train.append(d_loss.item())
+                if (accumulation_step % self.configuration.ACCUMULATION_STEPS == 0) or self.sanity_checking:
+                    self.optimizer_discriminator.step()
+                    self.optimizer_discriminator.zero_grad()
 
-            # 2. Train Generator
-            self.optimizer_generator.zero_grad()
+                d_loss_total_train.append(d_loss.item() * self.configuration.ACCUMULATION_STEPS)
 
-            # Generate new fake data
+            # Train generator
             d_fake = self.discriminator(local_graph, voxel_graph, label_hard)
             g_loss_adv = torch.nn.functional.binary_cross_entropy(d_fake, torch.ones_like(d_fake))
 
@@ -281,15 +294,22 @@ class TrainerHelper:
 
             g_loss_ratio_voids = torch.nn.functional.l1_loss(label_ratio_g[-2:], label_ratio[-2:])
             g_loss_ratio_voids *= self.configuration.LAMBDA_RATIO_VOID
-            g_loss = g_loss_adv + g_loss_ratio + g_loss_label + g_loss_ratio_voids
-            g_loss_total_train.append(g_loss.item())
 
+            g_loss = g_loss_adv + g_loss_ratio + g_loss_label + g_loss_ratio_voids
+            g_loss /= self.configuration.ACCUMULATION_STEPS
             g_loss.backward()
-            self.optimizer_generator.step()
+
+            if (accumulation_step % self.configuration.ACCUMULATION_STEPS == 0) or self.sanity_checking:
+                self.optimizer_generator.step()
+                self.optimizer_generator.zero_grad()
+
+            g_loss_total_train.append(g_loss.item() * self.configuration.ACCUMULATION_STEPS)  # Scale back for logging
 
             voxel_types_generated = label_hard.argmax(dim=1)
             accuracy = (voxel_types_generated == voxel_graph.type).float().mean().item()
             accuracy_total_train.append(accuracy)
+
+            accumulation_step += 1
 
         g_loss_mean_train = torch.tensor(g_loss_total_train).mean().item()
         d_loss_mean_train = torch.tensor(d_loss_total_train).mean().item()
@@ -312,6 +332,8 @@ class TrainerHelper:
         for _, (local_graph, voxel_graph) in enumerate(self.dataloaders.validation_dataloader):
             local_graph = local_graph.to(self.configuration.DEVICE)
             voxel_graph = voxel_graph.to(self.configuration.DEVICE)
+
+            assert [set(d) for d in local_graph.data_number] == [set(d) for d in voxel_graph.data_number]
 
             z = torch.randn(voxel_graph.num_nodes, self.configuration.Z_DIM).to(self.configuration.DEVICE)
             label_hard, label_soft = self.generator(local_graph, voxel_graph, z)
@@ -392,6 +414,9 @@ class Trainer(TrainerHelper):
             print(f"Loaded states from {self.log_dir}")
 
         self.summary_writer = SummaryWriter(log_dir=self.log_dir)
+
+        for i in range(torch.cuda.device_count()):
+            print(torch.cuda.get_device_properties(i).name)
 
     def train(self):
         config_dict = self.configuration.to_dict()
