@@ -26,11 +26,30 @@ class VoxelGNNGenerator(nn.Module):
         else:
             raise ValueError(f"Invalid conv_type: {configuration.GENERATOR_CONV_TYPE}")
 
+        self.local_graph_encoder = nn.Sequential(
+            nn.Linear(configuration.LOCAL_GRAPH_DIM, configuration.LOCAL_ENCODER_HIDDEN_DIM),
+            nn.ReLU(True),
+            nn.Linear(configuration.LOCAL_ENCODER_HIDDEN_DIM, configuration.LOCAL_ENCODER_HIDDEN_DIM),
+            nn.ReLU(True),
+            nn.Linear(configuration.LOCAL_ENCODER_HIDDEN_DIM, configuration.LOCAL_ENCODER_HIDDEN_DIM),
+            nn.ReLU(True),
+            nn.Linear(configuration.LOCAL_ENCODER_HIDDEN_DIM, configuration.LOCAL_ENCODER_HIDDEN_DIM),
+            nn.ReLU(True),
+            nn.Linear(configuration.LOCAL_ENCODER_HIDDEN_DIM, configuration.LOCAL_ENCODER_HIDDEN_DIM),
+            nn.ReLU(True),
+        )
+
         self.mlp_encoder = nn.Sequential(
             nn.Linear(
-                configuration.LOCAL_GRAPH_DIM + configuration.VOXEL_GRAPH_DIM + configuration.Z_DIM,
+                configuration.LOCAL_ENCODER_HIDDEN_DIM + configuration.VOXEL_GRAPH_DIM + configuration.Z_DIM,
                 configuration.GENERATOR_HIDDEN_DIM,
             ),
+            nn.ReLU(True),
+            nn.Linear(configuration.GENERATOR_HIDDEN_DIM, configuration.GENERATOR_HIDDEN_DIM),
+            nn.ReLU(True),
+            nn.Linear(configuration.GENERATOR_HIDDEN_DIM, configuration.GENERATOR_HIDDEN_DIM),
+            nn.ReLU(True),
+            nn.Linear(configuration.GENERATOR_HIDDEN_DIM, configuration.GENERATOR_HIDDEN_DIM),
             nn.ReLU(True),
             nn.Linear(configuration.GENERATOR_HIDDEN_DIM, configuration.GENERATOR_HIDDEN_DIM),
             nn.ReLU(True),
@@ -63,7 +82,7 @@ class VoxelGNNGenerator(nn.Module):
 
         self.decoder = nn.Sequential(
             nn.Linear(
-                configuration.LOCAL_GRAPH_DIM
+                configuration.LOCAL_ENCODER_HIDDEN_DIM
                 + configuration.VOXEL_GRAPH_DIM
                 + configuration.Z_DIM
                 + out_channels
@@ -87,13 +106,24 @@ class VoxelGNNGenerator(nn.Module):
         self.to(configuration.DEVICE)
 
     def forward(self, local_graph, voxel_graph, z):
-        x_ = torch.cat([local_graph.x[voxel_graph.type], voxel_graph.x, z], dim=-1)
-        x = self.mlp_encoder(x_)
+        matched_x = torch.zeros((voxel_graph.x.shape[0], local_graph.x.shape[1]), device=local_graph.x.device)
 
+        for type_idx in torch.unique(voxel_graph.type):
+            voxel_mask = voxel_graph.type == type_idx
+            local_mask = local_graph.type == type_idx
+
+            if local_mask.sum() > 0:
+                matched_x[voxel_mask] = local_graph.x[local_mask].mean(dim=0)
+
+        encoded_local = self.local_graph_encoder(matched_x)
+        combined_features = torch.cat([encoded_local, voxel_graph.x, z], dim=-1)
+
+        x = self.mlp_encoder(combined_features)
         encoded = self.encoder(x=x, edge_index=voxel_graph.edge_index)
-        encoded = torch.cat([encoded, x, x_], dim=-1)
 
-        decoded = self.decoder(encoded)
+        final_features = torch.cat([encoded, x, encoded_local, voxel_graph.x, z], dim=-1)
+
+        decoded = self.decoder(final_features)
 
         label_soft = torch.nn.functional.gumbel_softmax(decoded, tau=1.0)
         label_hard = torch.zeros_like(label_soft)
@@ -167,7 +197,16 @@ class VoxelGNNDiscriminator(nn.Module):
         self.to(configuration.DEVICE)
 
     def forward(self, local_graph, voxel_graph, label_hard):
-        x_ = torch.cat([local_graph.x[voxel_graph.type], voxel_graph.x, label_hard], dim=-1)
+        matched_x = torch.zeros((voxel_graph.x.shape[0], local_graph.x.shape[1]), device=local_graph.x.device)
+
+        for type_idx in torch.unique(voxel_graph.type):
+            voxel_mask = voxel_graph.type == type_idx
+            local_mask = local_graph.type == type_idx
+
+            if local_mask.sum() > 0:
+                matched_x[voxel_mask] = local_graph.x[local_mask].mean(dim=0)
+
+        x_ = torch.cat([matched_x, voxel_graph.x, label_hard], dim=-1)
         x = self.mlp_encoder(x_)
 
         encoded = self.encoder(x=x, edge_index=voxel_graph.edge_index)
