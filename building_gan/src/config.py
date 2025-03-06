@@ -102,7 +102,7 @@ class Configuration(ProgramMap, DataConfiguration, ModelConfiguration):
         if sanity_checking:
             self.BATCH_SIZE = 1
             self.DATA_SLICER = int(1e10)
-            self.DATA_POINT = 1004
+            self.DATA_POINT = 77
 
     def to_dict(self, class_name: List[str] = ["ProgramMap", "DataConfiguration", "ModelConfiguration"]):
         config_dict = {
