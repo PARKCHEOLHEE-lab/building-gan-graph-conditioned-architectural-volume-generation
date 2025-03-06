@@ -41,7 +41,6 @@ class DataConfiguration:
 
     SAVE_DATA_PATH = os.path.abspath(os.path.join(os.path.dirname(__file__), "../data/6types-processed_data"))
 
-    NEGATIVE_SAMPLING_MULTIPLIER = 2
     NORMALIZATION_FACTOR = 50
 
     LOCAL_DATA_SUFFIX = "_local.pt"
@@ -60,7 +59,8 @@ class ModelConfiguration:
 
     DATA_POINT = None
     DATA_SLICER = int(1e10)
-    BATCH_SIZE = 128
+    BATCH_SIZE = 64
+    ACCUMULATION_STEPS = 4
 
     N_CRITIC = 5
     LEARNING_RATE_GENERATOR = 0.0002
@@ -71,7 +71,9 @@ class ModelConfiguration:
     LAMBDA_RATIO_VOID = 0.0
     LAMBDA_LABEL = 10.0
 
-    DEVICE = "cuda"
+    DEVICE = "cpu"
+    if torch.cuda.is_available():
+        DEVICE = "cuda"
 
     LOG_DIR = os.path.abspath(os.path.join(__file__, "../../runs"))
 
