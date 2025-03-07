@@ -26,40 +26,47 @@ class VoxelGNNGenerator(nn.Module):
         else:
             raise ValueError(f"Invalid conv_type: {configuration.GENERATOR_CONV_TYPE}")
 
-        self.local_graph_encoder = nn.Sequential(
+        local_graph_encoder_modules = []
+        local_graph_encoder_modules += [
             nn.Linear(configuration.LOCAL_GRAPH_DIM, configuration.LOCAL_ENCODER_HIDDEN_DIM),
-            nn.ReLU(True),
-            nn.Linear(configuration.LOCAL_ENCODER_HIDDEN_DIM, configuration.LOCAL_ENCODER_HIDDEN_DIM),
-            nn.ReLU(True),
-            nn.Linear(configuration.LOCAL_ENCODER_HIDDEN_DIM, configuration.LOCAL_ENCODER_HIDDEN_DIM),
-            nn.ReLU(True),
-            nn.Linear(configuration.LOCAL_ENCODER_HIDDEN_DIM, configuration.LOCAL_ENCODER_HIDDEN_DIM),
-            nn.ReLU(True),
-            nn.Linear(configuration.LOCAL_ENCODER_HIDDEN_DIM, configuration.LOCAL_ENCODER_HIDDEN_DIM),
-            nn.ReLU(True),
-        )
+            nn.BatchNorm1d(configuration.LOCAL_ENCODER_HIDDEN_DIM),
+            nn.LeakyReLU(0.2),
+        ]
 
-        self.mlp_encoder = nn.Sequential(
+        for _ in range(configuration.LOCAL_GRAPH_ENCODER_REPEAT):
+            local_graph_encoder_modules += [
+                nn.Linear(configuration.LOCAL_ENCODER_HIDDEN_DIM, configuration.LOCAL_ENCODER_HIDDEN_DIM),
+                nn.BatchNorm1d(configuration.LOCAL_ENCODER_HIDDEN_DIM),
+                nn.LeakyReLU(0.2),
+            ]
+
+        self.local_graph_encoder = nn.Sequential(*local_graph_encoder_modules)
+
+        self.mlp_encoder_modules = []
+        self.mlp_encoder_modules += [
             nn.Linear(
                 configuration.LOCAL_ENCODER_HIDDEN_DIM + configuration.VOXEL_GRAPH_DIM + configuration.Z_DIM,
                 configuration.GENERATOR_HIDDEN_DIM,
             ),
+            nn.BatchNorm1d(configuration.GENERATOR_HIDDEN_DIM),
             nn.ReLU(True),
-            nn.Linear(configuration.GENERATOR_HIDDEN_DIM, configuration.GENERATOR_HIDDEN_DIM),
-            nn.ReLU(True),
-            nn.Linear(configuration.GENERATOR_HIDDEN_DIM, configuration.GENERATOR_HIDDEN_DIM),
-            nn.ReLU(True),
-            nn.Linear(configuration.GENERATOR_HIDDEN_DIM, configuration.GENERATOR_HIDDEN_DIM),
-            nn.ReLU(True),
-            nn.Linear(configuration.GENERATOR_HIDDEN_DIM, configuration.GENERATOR_HIDDEN_DIM),
-            nn.ReLU(True),
-        )
+            nn.Dropout(0.2),
+        ]
 
-        self.encoder = []
+        for _ in range(configuration.GENERATOR_MLP_ENCODER_REPEAT):
+            self.mlp_encoder_modules += [
+                nn.Linear(configuration.GENERATOR_HIDDEN_DIM, configuration.GENERATOR_HIDDEN_DIM),
+                nn.BatchNorm1d(configuration.GENERATOR_HIDDEN_DIM),
+                nn.ReLU(True),
+                nn.Dropout(0.2),
+            ]
 
+        self.mlp_encoder = nn.Sequential(*self.mlp_encoder_modules)
+
+        self.encoder_modules = []
         out_channels = configuration.GENERATOR_HIDDEN_DIM
         for _ in range(configuration.GENERATOR_ENCODER_REPEAT):
-            self.encoder += [
+            self.encoder_modules += [
                 (conv(out_channels, out_channels // 2), f"{configuration.INPUT_ARGS} -> x"),
                 tgnn.norm.GraphNorm(out_channels // 2),
                 nn.ReLU(True),
@@ -69,7 +76,7 @@ class VoxelGNNGenerator(nn.Module):
             out_channels //= 2
 
         for _ in range(configuration.GENERATOR_ENCODER_REPEAT):
-            self.encoder += [
+            self.encoder_modules += [
                 (conv(out_channels, out_channels * 2), f"{configuration.INPUT_ARGS} -> x"),
                 tgnn.norm.GraphNorm(out_channels * 2),
                 nn.ReLU(True),
@@ -78,7 +85,7 @@ class VoxelGNNGenerator(nn.Module):
 
             out_channels *= 2
 
-        self.encoder = tgnn.Sequential(input_args=configuration.INPUT_ARGS, modules=self.encoder)
+        self.encoder = tgnn.Sequential(input_args=configuration.INPUT_ARGS, modules=self.encoder_modules)
 
         self.decoder = nn.Sequential(
             nn.Linear(
@@ -158,11 +165,11 @@ class VoxelGNNDiscriminator(nn.Module):
             nn.ReLU(True),
         )
 
-        self.encoder = []
+        self.encoder_modules = []
 
         out_channels = configuration.DISCRIMINATOR_HIDDEN_DIM
         for _ in range(configuration.DISCRIMINATOR_ENCODER_REPEAT):
-            self.encoder += [
+            self.encoder_modules += [
                 (conv(out_channels, out_channels // 2), f"{configuration.INPUT_ARGS} -> x"),
                 tgnn.norm.GraphNorm(out_channels // 2),
                 nn.ReLU(True),
@@ -172,7 +179,7 @@ class VoxelGNNDiscriminator(nn.Module):
             out_channels //= 2
 
         for _ in range(configuration.DISCRIMINATOR_ENCODER_REPEAT):
-            self.encoder += [
+            self.encoder_modules += [
                 (conv(out_channels, out_channels * 2), f"{configuration.INPUT_ARGS} -> x"),
                 tgnn.norm.GraphNorm(out_channels * 2),
                 nn.ReLU(True),
@@ -181,7 +188,7 @@ class VoxelGNNDiscriminator(nn.Module):
 
             out_channels *= 2
 
-        self.encoder = tgnn.Sequential(input_args=configuration.INPUT_ARGS, modules=self.encoder)
+        self.encoder = tgnn.Sequential(input_args=configuration.INPUT_ARGS, modules=self.encoder_modules)
 
         self.decoder = nn.Sequential(
             nn.Linear(configuration.DISCRIMINATOR_HIDDEN_DIM, configuration.DISCRIMINATOR_HIDDEN_DIM // 2),

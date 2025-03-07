@@ -87,9 +87,12 @@ class ModelConfiguration:
 
     Z_DIM = 128
     LOCAL_GRAPH_DIM = 18
+    LOCAL_GRAPH_ENCODER_REPEAT = 4
     LOCAL_ENCODER_HIDDEN_DIM = 128
     VOXEL_GRAPH_DIM = 11
     ENCODER_DROPOUT_RATE = 0.2
+
+    GENERATOR_MLP_ENCODER_REPEAT = 4
 
     INPUT_ARGS = "x, edge_index"
 
