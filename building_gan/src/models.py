@@ -26,40 +26,45 @@ class VoxelGNNGenerator(nn.Module):
         else:
             raise ValueError(f"Invalid conv_type: {configuration.GENERATOR_CONV_TYPE}")
 
-        self.local_graph_encoder = nn.Sequential(
+        local_graph_encoder_modules = []
+        local_graph_encoder_modules += [
             nn.Linear(configuration.LOCAL_GRAPH_DIM, configuration.LOCAL_ENCODER_HIDDEN_DIM),
-            nn.ReLU(True),
-            nn.Linear(configuration.LOCAL_ENCODER_HIDDEN_DIM, configuration.LOCAL_ENCODER_HIDDEN_DIM),
-            nn.ReLU(True),
-            nn.Linear(configuration.LOCAL_ENCODER_HIDDEN_DIM, configuration.LOCAL_ENCODER_HIDDEN_DIM),
-            nn.ReLU(True),
-            nn.Linear(configuration.LOCAL_ENCODER_HIDDEN_DIM, configuration.LOCAL_ENCODER_HIDDEN_DIM),
-            nn.ReLU(True),
-            nn.Linear(configuration.LOCAL_ENCODER_HIDDEN_DIM, configuration.LOCAL_ENCODER_HIDDEN_DIM),
-            nn.ReLU(True),
-        )
+            nn.BatchNorm1d(configuration.LOCAL_ENCODER_HIDDEN_DIM),
+            nn.LeakyReLU(0.2),
+        ]
 
-        self.mlp_encoder = nn.Sequential(
+        for _ in range(configuration.LOCAL_GRAPH_ENCODER_REPEAT):
+            local_graph_encoder_modules += [
+                nn.Linear(configuration.LOCAL_ENCODER_HIDDEN_DIM, configuration.LOCAL_ENCODER_HIDDEN_DIM),
+                nn.BatchNorm1d(configuration.LOCAL_ENCODER_HIDDEN_DIM),
+                nn.LeakyReLU(0.2),
+            ]
+
+        self.local_graph_encoder = nn.Sequential(*local_graph_encoder_modules)
+
+        self.mlp_encoder_modules = []
+        self.mlp_encoder_modules += [
             nn.Linear(
                 configuration.LOCAL_ENCODER_HIDDEN_DIM + configuration.VOXEL_GRAPH_DIM + configuration.Z_DIM,
                 configuration.GENERATOR_HIDDEN_DIM,
             ),
-            nn.ReLU(True),
-            nn.Linear(configuration.GENERATOR_HIDDEN_DIM, configuration.GENERATOR_HIDDEN_DIM),
-            nn.ReLU(True),
-            nn.Linear(configuration.GENERATOR_HIDDEN_DIM, configuration.GENERATOR_HIDDEN_DIM),
-            nn.ReLU(True),
-            nn.Linear(configuration.GENERATOR_HIDDEN_DIM, configuration.GENERATOR_HIDDEN_DIM),
-            nn.ReLU(True),
-            nn.Linear(configuration.GENERATOR_HIDDEN_DIM, configuration.GENERATOR_HIDDEN_DIM),
-            nn.ReLU(True),
-        )
+            nn.BatchNorm1d(configuration.GENERATOR_HIDDEN_DIM),
+            nn.LeakyReLU(0.2),
+        ]
 
-        self.encoder = []
+        for _ in range(configuration.GENERATOR_MLP_ENCODER_REPEAT):
+            self.mlp_encoder_modules += [
+                nn.Linear(configuration.GENERATOR_HIDDEN_DIM, configuration.GENERATOR_HIDDEN_DIM),
+                nn.BatchNorm1d(configuration.GENERATOR_HIDDEN_DIM),
+                nn.LeakyReLU(0.2),
+            ]
 
+        self.mlp_encoder = nn.Sequential(*self.mlp_encoder_modules)
+
+        self.encoder_modules = []
         out_channels = configuration.GENERATOR_HIDDEN_DIM
         for _ in range(configuration.GENERATOR_ENCODER_REPEAT):
-            self.encoder += [
+            self.encoder_modules += [
                 (conv(out_channels, out_channels // 2), f"{configuration.INPUT_ARGS} -> x"),
                 tgnn.norm.GraphNorm(out_channels // 2),
                 nn.ReLU(True),
@@ -69,7 +74,7 @@ class VoxelGNNGenerator(nn.Module):
             out_channels //= 2
 
         for _ in range(configuration.GENERATOR_ENCODER_REPEAT):
-            self.encoder += [
+            self.encoder_modules += [
                 (conv(out_channels, out_channels * 2), f"{configuration.INPUT_ARGS} -> x"),
                 tgnn.norm.GraphNorm(out_channels * 2),
                 nn.ReLU(True),
@@ -78,7 +83,7 @@ class VoxelGNNGenerator(nn.Module):
 
             out_channels *= 2
 
-        self.encoder = tgnn.Sequential(input_args=configuration.INPUT_ARGS, modules=self.encoder)
+        self.encoder = tgnn.Sequential(input_args=configuration.INPUT_ARGS, modules=self.encoder_modules)
 
         self.decoder = nn.Sequential(
             nn.Linear(
@@ -90,23 +95,30 @@ class VoxelGNNGenerator(nn.Module):
                 configuration.GENERATOR_HIDDEN_DIM,
             ),
             nn.BatchNorm1d(configuration.GENERATOR_HIDDEN_DIM),
-            nn.ReLU(True),
+            nn.LeakyReLU(0.2),
             nn.Linear(configuration.GENERATOR_HIDDEN_DIM, configuration.GENERATOR_HIDDEN_DIM // 2),
             nn.BatchNorm1d(configuration.GENERATOR_HIDDEN_DIM // 2),
-            nn.ReLU(True),
+            nn.LeakyReLU(0.2),
             nn.Linear(configuration.GENERATOR_HIDDEN_DIM // 2, configuration.GENERATOR_HIDDEN_DIM // 4),
             nn.BatchNorm1d(configuration.GENERATOR_HIDDEN_DIM // 4),
-            nn.ReLU(True),
+            nn.LeakyReLU(0.2),
             nn.Linear(configuration.GENERATOR_HIDDEN_DIM // 4, configuration.GENERATOR_HIDDEN_DIM // 8),
             nn.BatchNorm1d(configuration.GENERATOR_HIDDEN_DIM // 8),
-            nn.ReLU(True),
+            nn.LeakyReLU(0.2),
             nn.Linear(configuration.GENERATOR_HIDDEN_DIM // 8, configuration.NUM_CLASSES),
         )
 
+        self.configuration = configuration
+
         self.to(configuration.DEVICE)
 
-    def forward(self, local_graph, voxel_graph, z):
-        matched_x = torch.zeros((voxel_graph.x.shape[0], local_graph.x.shape[1]), device=local_graph.x.device)
+    def forward(self, local_graph, voxel_graph, z=None):
+        device = local_graph.x.device
+
+        if z is None:
+            z = torch.randn(voxel_graph.num_nodes, self.configuration.Z_DIM).to(device)
+
+        matched_x = torch.zeros((voxel_graph.x.shape[0], local_graph.x.shape[1]), device=device)
 
         for type_idx in torch.unique(voxel_graph.type):
             voxel_mask = voxel_graph.type == type_idx
@@ -115,8 +127,10 @@ class VoxelGNNGenerator(nn.Module):
             if local_mask.sum() > 0:
                 matched_x[voxel_mask] = local_graph.x[local_mask].mean(dim=0)
 
-        encoded_local = self.local_graph_encoder(matched_x)
-        combined_features = torch.cat([encoded_local, voxel_graph.x, z], dim=-1)
+        encoded_local = self.local_graph_encoder(matched_x.to(self.local_graph_encoder[0].weight.device))
+        combined_features = torch.cat(
+            [encoded_local, voxel_graph.x.to(encoded_local.device), z.to(encoded_local.device)], dim=-1
+        )
 
         x = self.mlp_encoder(combined_features)
         encoded = self.encoder(x=x, edge_index=voxel_graph.edge_index)
@@ -158,11 +172,11 @@ class VoxelGNNDiscriminator(nn.Module):
             nn.ReLU(True),
         )
 
-        self.encoder = []
+        self.encoder_modules = []
 
         out_channels = configuration.DISCRIMINATOR_HIDDEN_DIM
         for _ in range(configuration.DISCRIMINATOR_ENCODER_REPEAT):
-            self.encoder += [
+            self.encoder_modules += [
                 (conv(out_channels, out_channels // 2), f"{configuration.INPUT_ARGS} -> x"),
                 tgnn.norm.GraphNorm(out_channels // 2),
                 nn.ReLU(True),
@@ -172,7 +186,7 @@ class VoxelGNNDiscriminator(nn.Module):
             out_channels //= 2
 
         for _ in range(configuration.DISCRIMINATOR_ENCODER_REPEAT):
-            self.encoder += [
+            self.encoder_modules += [
                 (conv(out_channels, out_channels * 2), f"{configuration.INPUT_ARGS} -> x"),
                 tgnn.norm.GraphNorm(out_channels * 2),
                 nn.ReLU(True),
@@ -181,7 +195,7 @@ class VoxelGNNDiscriminator(nn.Module):
 
             out_channels *= 2
 
-        self.encoder = tgnn.Sequential(input_args=configuration.INPUT_ARGS, modules=self.encoder)
+        self.encoder = tgnn.Sequential(input_args=configuration.INPUT_ARGS, modules=self.encoder_modules)
 
         self.decoder = nn.Sequential(
             nn.Linear(configuration.DISCRIMINATOR_HIDDEN_DIM, configuration.DISCRIMINATOR_HIDDEN_DIM // 2),
