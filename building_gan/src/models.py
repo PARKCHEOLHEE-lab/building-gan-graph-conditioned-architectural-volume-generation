@@ -49,16 +49,14 @@ class VoxelGNNGenerator(nn.Module):
                 configuration.GENERATOR_HIDDEN_DIM,
             ),
             nn.BatchNorm1d(configuration.GENERATOR_HIDDEN_DIM),
-            nn.ReLU(True),
-            nn.Dropout(0.2),
+            nn.LeakyReLU(0.2),
         ]
 
         for _ in range(configuration.GENERATOR_MLP_ENCODER_REPEAT):
             self.mlp_encoder_modules += [
                 nn.Linear(configuration.GENERATOR_HIDDEN_DIM, configuration.GENERATOR_HIDDEN_DIM),
                 nn.BatchNorm1d(configuration.GENERATOR_HIDDEN_DIM),
-                nn.ReLU(True),
-                nn.Dropout(0.2),
+                nn.LeakyReLU(0.2),
             ]
 
         self.mlp_encoder = nn.Sequential(*self.mlp_encoder_modules)
@@ -97,23 +95,30 @@ class VoxelGNNGenerator(nn.Module):
                 configuration.GENERATOR_HIDDEN_DIM,
             ),
             nn.BatchNorm1d(configuration.GENERATOR_HIDDEN_DIM),
-            nn.ReLU(True),
+            nn.LeakyReLU(0.2),
             nn.Linear(configuration.GENERATOR_HIDDEN_DIM, configuration.GENERATOR_HIDDEN_DIM // 2),
             nn.BatchNorm1d(configuration.GENERATOR_HIDDEN_DIM // 2),
-            nn.ReLU(True),
+            nn.LeakyReLU(0.2),
             nn.Linear(configuration.GENERATOR_HIDDEN_DIM // 2, configuration.GENERATOR_HIDDEN_DIM // 4),
             nn.BatchNorm1d(configuration.GENERATOR_HIDDEN_DIM // 4),
-            nn.ReLU(True),
+            nn.LeakyReLU(0.2),
             nn.Linear(configuration.GENERATOR_HIDDEN_DIM // 4, configuration.GENERATOR_HIDDEN_DIM // 8),
             nn.BatchNorm1d(configuration.GENERATOR_HIDDEN_DIM // 8),
-            nn.ReLU(True),
+            nn.LeakyReLU(0.2),
             nn.Linear(configuration.GENERATOR_HIDDEN_DIM // 8, configuration.NUM_CLASSES),
         )
 
+        self.configuration = configuration
+
         self.to(configuration.DEVICE)
 
-    def forward(self, local_graph, voxel_graph, z):
-        matched_x = torch.zeros((voxel_graph.x.shape[0], local_graph.x.shape[1]), device=local_graph.x.device)
+    def forward(self, local_graph, voxel_graph, z=None):
+        device = local_graph.x.device
+
+        if z is None:
+            z = torch.randn(voxel_graph.num_nodes, self.configuration.Z_DIM).to(device)
+
+        matched_x = torch.zeros((voxel_graph.x.shape[0], local_graph.x.shape[1]), device=device)
 
         for type_idx in torch.unique(voxel_graph.type):
             voxel_mask = voxel_graph.type == type_idx
@@ -122,8 +127,10 @@ class VoxelGNNGenerator(nn.Module):
             if local_mask.sum() > 0:
                 matched_x[voxel_mask] = local_graph.x[local_mask].mean(dim=0)
 
-        encoded_local = self.local_graph_encoder(matched_x)
-        combined_features = torch.cat([encoded_local, voxel_graph.x, z], dim=-1)
+        encoded_local = self.local_graph_encoder(matched_x.to(self.local_graph_encoder[0].weight.device))
+        combined_features = torch.cat(
+            [encoded_local, voxel_graph.x.to(encoded_local.device), z.to(encoded_local.device)], dim=-1
+        )
 
         x = self.mlp_encoder(combined_features)
         encoded = self.encoder(x=x, edge_index=voxel_graph.edge_index)

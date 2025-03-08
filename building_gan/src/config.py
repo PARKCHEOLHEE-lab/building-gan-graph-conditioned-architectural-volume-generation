@@ -67,7 +67,7 @@ class ModelConfiguration:
     LEARNING_RATE_DISCRIMINATOR = 0.0002
 
     LAMBDA_GP = 10.0
-    LAMBDA_RATIO = 1.0
+    LAMBDA_RATIO = 5.0
     LAMBDA_RATIO_VOID = 0.0
     LAMBDA_LABEL = 10.0
 
