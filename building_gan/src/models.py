@@ -112,11 +112,8 @@ class VoxelGNNGenerator(nn.Module):
 
         self.to(configuration.DEVICE)
 
-    def forward(self, local_graph, voxel_graph, z=None):
+    def forward(self, local_graph, voxel_graph, z):
         device = local_graph.x.device
-
-        if z is None:
-            z = torch.randn(voxel_graph.num_nodes, self.configuration.Z_DIM).to(device)
 
         matched_x = torch.zeros((voxel_graph.x.shape[0], local_graph.x.shape[1]), device=device)
 
@@ -129,13 +126,13 @@ class VoxelGNNGenerator(nn.Module):
 
         encoded_local = self.local_graph_encoder(matched_x.to(self.local_graph_encoder[0].weight.device))
         combined_features = torch.cat(
-            [encoded_local, voxel_graph.x.to(encoded_local.device), z.to(encoded_local.device)], dim=-1
+            [encoded_local, voxel_graph.x.to(encoded_local.device), z.squeeze(0).to(encoded_local.device)], dim=-1
         )
 
         x = self.mlp_encoder(combined_features)
         encoded = self.encoder(x=x, edge_index=voxel_graph.edge_index)
 
-        final_features = torch.cat([encoded, x, encoded_local, voxel_graph.x, z], dim=-1)
+        final_features = torch.cat([encoded, x, encoded_local, voxel_graph.x, z.squeeze(0)], dim=-1)
 
         decoded = self.decoder(final_features)
 
@@ -220,7 +217,7 @@ class VoxelGNNDiscriminator(nn.Module):
             if local_mask.sum() > 0:
                 matched_x[voxel_mask] = local_graph.x[local_mask].mean(dim=0)
 
-        x_ = torch.cat([matched_x, voxel_graph.x, label_hard], dim=-1)
+        x_ = torch.cat([matched_x, voxel_graph.x, label_hard.squeeze(0)], dim=-1)
         x = self.mlp_encoder(x_)
 
         encoded = self.encoder(x=x, edge_index=voxel_graph.edge_index)
@@ -239,13 +236,13 @@ def compute_gradient_penalty(
     e = torch.rand(voxel_graph.types_onehot.shape[0], 1)
     e = e.to(label_soft.device)
 
-    interpolated = (e * voxel_graph.types_onehot + ((1 - e) * label_soft)).requires_grad_(True)
+    interpolated = (e * voxel_graph.types_onehot + ((1 - e) * label_soft.squeeze(0))).requires_grad_(True)
     interpolated = interpolated.to(label_soft.device)
 
     interpolated_hard = torch.zeros_like(interpolated)
     interpolated_hard.scatter_(-1, interpolated.argmax(dim=1, keepdim=True), 1.0)
 
-    d_loss_interpolated = discriminator(local_graph, voxel_graph, interpolated)
+    d_loss_interpolated = discriminator(local_graph, voxel_graph, interpolated.unsqueeze(0))
 
     gradients = torch.autograd.grad(
         outputs=d_loss_interpolated,

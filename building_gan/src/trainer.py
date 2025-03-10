@@ -61,7 +61,8 @@ class TrainerHelper:
         self.generator.eval()
         self.discriminator.eval()
 
-        label_hard, _ = self.generator(local_graph, voxel_graph)
+        z = torch.randn(1, voxel_graph.num_nodes, self.configuration.Z_DIM).to(self.configuration.DEVICE)
+        label_hard, _ = self.generator(local_graph, voxel_graph, z)
 
         voxel_types_generated = label_hard.argmax(dim=1)
         accuracy = (voxel_types_generated == voxel_graph.type).float().mean().item()
@@ -254,10 +255,14 @@ class TrainerHelper:
             # Train discriminator
             for _ in range(self.configuration.N_CRITIC):
                 # Generate fake data
-                label_hard, label_soft = self.generator(local_graph, voxel_graph)
+
+                z = torch.randn(1, voxel_graph.num_nodes, self.configuration.Z_DIM).to(self.configuration.DEVICE)
+                label_hard, label_soft = self.generator(local_graph, voxel_graph, z)
+                label_hard = label_hard.unsqueeze(0)
+                label_soft = label_soft.unsqueeze(0)
 
                 # Compute discriminator loss
-                d_real = self.discriminator(local_graph, voxel_graph, voxel_graph.types_onehot)
+                d_real = self.discriminator(local_graph, voxel_graph, voxel_graph.types_onehot.unsqueeze(0))
                 d_fake = self.discriminator(local_graph, voxel_graph, label_hard.detach())
 
                 d_loss_real = torch.nn.functional.binary_cross_entropy(d_real, torch.ones_like(d_real))
@@ -281,10 +286,10 @@ class TrainerHelper:
             d_fake = self.discriminator(local_graph, voxel_graph, label_hard)
             g_loss_adv = torch.nn.functional.binary_cross_entropy(d_fake, torch.ones_like(d_fake))
 
-            g_loss_label = torch.nn.functional.cross_entropy(label_soft, voxel_graph.types_onehot.float())
+            g_loss_label = torch.nn.functional.cross_entropy(label_soft.squeeze(0), voxel_graph.types_onehot.float())
             g_loss_label *= self.configuration.LAMBDA_LABEL
 
-            label_ratio_g = label_hard.sum(dim=0) / voxel_graph.num_nodes
+            label_ratio_g = label_hard.squeeze(0).sum(dim=0) / voxel_graph.num_nodes
             label_ratio = voxel_graph.types_onehot.sum(dim=0) / voxel_graph.num_nodes
 
             g_loss_ratio = torch.nn.functional.l1_loss(label_ratio_g, label_ratio)
@@ -303,7 +308,7 @@ class TrainerHelper:
 
             g_loss_total_train.append(g_loss.item() * self.configuration.ACCUMULATION_STEPS)  # Scale back for logging
 
-            voxel_types_generated = label_hard.argmax(dim=1)
+            voxel_types_generated = label_hard.squeeze(0).argmax(dim=1)
             accuracy = (voxel_types_generated == voxel_graph.type).float().mean().item()
             accuracy_total_train.append(accuracy)
 
@@ -333,15 +338,18 @@ class TrainerHelper:
 
             assert [set(d) for d in local_graph.data_number] == [set(d) for d in voxel_graph.data_number]
 
-            label_hard, label_soft = self.generator(local_graph, voxel_graph)
+            z = torch.randn(1, voxel_graph.num_nodes, self.configuration.Z_DIM).to(self.configuration.DEVICE)
+            label_hard, label_soft = self.generator(local_graph, voxel_graph, z)
+            label_hard = label_hard.unsqueeze(0)
+            label_soft = label_soft.unsqueeze(0)
 
             d_fake = self.discriminator(local_graph, voxel_graph, label_hard)
             g_loss_adv = torch.nn.functional.binary_cross_entropy(d_fake, torch.ones_like(d_fake))
 
-            g_loss_label = torch.nn.functional.cross_entropy(label_soft, voxel_graph.types_onehot.float())
+            g_loss_label = torch.nn.functional.cross_entropy(label_soft.squeeze(0), voxel_graph.types_onehot.float())
             g_loss_label *= self.configuration.LAMBDA_LABEL
 
-            label_ratio_g = label_hard.sum(dim=0) / voxel_graph.num_nodes
+            label_ratio_g = label_hard.squeeze(0).sum(dim=0) / voxel_graph.num_nodes
             label_ratio = voxel_graph.types_onehot.sum(dim=0) / voxel_graph.num_nodes
 
             g_loss_ratio = torch.nn.functional.l1_loss(label_ratio_g, label_ratio)
@@ -352,7 +360,7 @@ class TrainerHelper:
             g_loss = g_loss_adv + g_loss_ratio + g_loss_label + g_loss_ratio_voids
             g_loss_total_validation.append(g_loss.item())
 
-            voxel_types_generated = label_hard.argmax(dim=1)
+            voxel_types_generated = label_hard.squeeze(0).argmax(dim=1)
             accuracy = (voxel_types_generated == voxel_graph.type).float().mean().item()
             accuracy_total_validation.append(accuracy)
 
