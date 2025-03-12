@@ -496,28 +496,3 @@ class Trainer(TrainerHelper):
 
                 merged_fig = self.evaluate_qualitatively(epoch, num_samples=2, to_tensor=True)
                 self.summary_writer.add_image(f"epoch_{epoch}", merged_fig, epoch)
-
-
-if __name__ == "__main__":
-    configuration = Configuration()
-    configuration.set_seed()
-
-    dataloaders = GraphDataLoaders(configuration=configuration)
-    generator = VoxelGNNGenerator(configuration)
-    discriminator = VoxelGNNDiscriminator(configuration)
-
-    optimizer_generator = torch.optim.AdamW(generator.parameters(), lr=configuration.LEARNING_RATE_GENERATOR)
-    optimizer_discriminator = torch.optim.AdamW(
-        discriminator.parameters(), lr=configuration.LEARNING_RATE_DISCRIMINATOR
-    )
-
-    trainer = Trainer(
-        generator=generator,
-        discriminator=discriminator,
-        dataloaders=dataloaders,
-        optimizer_generator=optimizer_generator,
-        optimizer_discriminator=optimizer_discriminator,
-        configuration=configuration,
-    )
-
-    trainer.train()
