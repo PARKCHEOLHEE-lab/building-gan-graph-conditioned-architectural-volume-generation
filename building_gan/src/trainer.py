@@ -433,12 +433,12 @@ class Trainer(TrainerHelper):
 
             print(f"Loaded states from {self.log_dir}")
 
-        self.summary_writer = SummaryWriter(log_dir=self.log_dir)
-
         for i in range(torch.cuda.device_count()):
             print(torch.cuda.get_device_properties(i).name)
 
     def train(self):
+        self.summary_writer = SummaryWriter(log_dir=self.log_dir)
+
         config_dict = self.configuration.to_dict()
         for key, value in config_dict.items():
             self.summary_writer.add_text(f"configuration/{key}", str(value))
