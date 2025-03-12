@@ -415,8 +415,16 @@ class Trainer(TrainerHelper):
 
         if os.path.exists(os.path.join(self.log_dir, "states.pt")):
             self.states = torch.load(os.path.join(self.log_dir, "states.pt"))
-            self.generator.load_state_dict(self.states["generator"])
-            self.discriminator.load_state_dict(self.states["discriminator"])
+
+            if torch.cuda.device_count() >= 2:
+                self.generator.load_state_dict(self.states["generator"])
+                self.discriminator.load_state_dict(self.states["discriminator"])
+            else:
+                generator_state = {k.replace("module.", ""): v for k, v in self.states["generator"].items()}
+                discriminator_state = {k.replace("module.", ""): v for k, v in self.states["discriminator"].items()}
+                self.generator.load_state_dict(generator_state)
+                self.discriminator.load_state_dict(discriminator_state)
+
             self.optimizer_generator.load_state_dict(self.states["optimizer_generator"])
             self.optimizer_discriminator.load_state_dict(self.states["optimizer_discriminator"])
 
