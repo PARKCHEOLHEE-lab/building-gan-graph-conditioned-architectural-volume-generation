@@ -181,8 +181,9 @@ class TrainerHelper:
         return fig
 
     @runtime_calculator
-    def _evaluate_qualitatively(self, epoch, num_samples=2, to_tensor=False):
-        figs = []
+    def evaluate_qualitatively(self, epoch, num_samples=2, to_tensor=False):
+        train_figs = []
+        validation_figs = []
         train_random_indices = torch.randint(len(self.dataloaders.train_dataloader.dataset), size=(num_samples,))
         validation_random_indices = torch.randint(
             len(self.dataloaders.validation_dataloader.dataset), size=(num_samples,)
@@ -218,8 +219,10 @@ class TrainerHelper:
                 to_pil=True,
             )
 
-            figs.insert(0, train_fig)
-            figs.append(validation_fig)
+            train_figs.append(train_fig)
+            validation_figs.append(validation_fig)
+
+        figs = train_figs + validation_figs
 
         width, height = figs[0].size
         merged_fig = Image.new("RGB", (width, height * len(figs)))
@@ -491,7 +494,7 @@ class Trainer(TrainerHelper):
                         os.path.join(self.log_dir, "states.pt"),
                     )
 
-                merged_fig = self._evaluate_qualitatively(epoch, num_samples=2, to_tensor=True)
+                merged_fig = self.evaluate_qualitatively(epoch, num_samples=2, to_tensor=True)
                 self.summary_writer.add_image(f"epoch_{epoch}", merged_fig, epoch)
 
 
