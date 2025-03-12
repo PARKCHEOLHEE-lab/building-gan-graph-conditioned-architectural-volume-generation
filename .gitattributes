@@ -1,3 +1,4 @@
 events.* filter=lfs diff=lfs merge=lfs -text
 *.pt filter=lfs diff=lfs merge=lfs -text
 *.zip filter=lfs diff=lfs merge=lfs -text
+building_gan/runs/** filter=lfs diff=lfs merge=lfs -text
