@@ -28,7 +28,7 @@ This repository uses the [image](/.devcontainer/Dockerfile) named `nvcr.io/nvidi
 2. Clone the repository.
 
     ```
-        git clone https://github.com/PARKCHEOLHEE-lab/free-form-floor-plan-design-using-differentiable-voronoi-diagram.git
+        https://github.com/PARKCHEOLHEE-lab/building-gan-graph-conditioned-architectural-volume-generation.git
     ```
 
 3. Open the project with VSCode.
