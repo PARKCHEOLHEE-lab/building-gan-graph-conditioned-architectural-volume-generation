@@ -1,6 +1,8 @@
 # building-gan-graph-conditioned-architectural-volume-generation
 
-This repository explores the key contributions of [Building-GAN](https://arxiv.org/pdf/2104.13316) by AutodeskAILab: 1) a novel 3D representation called **voxel graph** that can encode **irregular voxel grids** with non-uniform space partitioning, overcoming limitations of traditional regular voxel grids, and 2) a graph-conditioned generative adversarial network (GAN) leveraging graph neural networks (GNNs). The implementation uses their [dataset](https://github.com/AutodeskAILab/Building-GAN?tab=readme-ov-file#:~:text=Download%20the%20dataset) to study these approaches.
+<div align="justify">
+This project explores the key contributions of <a href="https://arxiv.org/pdf/2104.13316">Building-GAN</a> by AutodeskAILab: 1) a novel 3D representation called <strong>voxel graph</strong> that can encode <strong>irregular voxel grids</strong> with non-uniform space partitioning, overcoming limitations of traditional regular voxel grids, and 2) a graph-conditioned generative adversarial network (GAN) leveraging graph neural networks (GNNs). The implementation uses their <a href="https://github.com/AutodeskAILab/Building-GAN?tab=readme-ov-file#:~:text=Download%20the%20dataset">dataset</a> to study these approaches.
+</div>
 
 
 
