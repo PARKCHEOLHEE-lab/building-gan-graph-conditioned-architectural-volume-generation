@@ -385,22 +385,41 @@ class DataCreator(DataCreatorHelper):
             os.path.join(self.configuration.GLOBAL_GRAPH_DATA_PATH, d)
             for d in os.listdir(self.configuration.GLOBAL_GRAPH_DATA_PATH)
         ]
+        global_graphs = sorted(
+            global_graphs, 
+            key=lambda x: int(os.path.basename(x).replace(".json", "").split("_")[-1])
+        )
 
         local_graphs = [
             os.path.join(self.configuration.LOCAL_GRAPH_DATA_PATH, d)
             for d in os.listdir(self.configuration.LOCAL_GRAPH_DATA_PATH)
         ]
+        local_graphs = sorted(
+            local_graphs, 
+            key=lambda x: int(os.path.basename(x).replace(".json", "").split("_")[-1])
+        )
 
         voxel_graphs = [
             os.path.join(self.configuration.VOXEL_GRAPH_DATA_PATH, d)
             for d in os.listdir(self.configuration.VOXEL_GRAPH_DATA_PATH)
         ]
+        voxel_graphs = sorted(
+            voxel_graphs, 
+            key=lambda x: int(os.path.basename(x).replace(".json", "").split("_")[-1])
+        )
 
         os.makedirs(self.configuration.SAVE_DATA_PATH, exist_ok=True)
 
         for global_graph_path, local_graph_path, voxel_graph_path in tqdm(
             zip(global_graphs, local_graphs, voxel_graphs), total=len(voxel_graphs)
         ):
+            
+            data_number_global = os.path.basename(global_graph_path).replace(".json", "").split("_")[-1]
+            data_number_local = os.path.basename(local_graph_path).replace(".json", "").split("_")[-1]
+            data_number_voxel = os.path.basename(voxel_graph_path).replace(".json", "").split("_")[-1]
+            
+            assert data_number_global == data_number_local == data_number_voxel
+            
             with open(global_graph_path, "r") as f:
                 global_graph_data = json.load(f)
 
