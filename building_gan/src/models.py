@@ -134,14 +134,14 @@ class VoxelGNNGenerator(nn.Module):
 
         final_features = torch.cat([encoded, x, encoded_local, voxel_graph.x, z.squeeze(0)], dim=-1)
 
-        decoded = self.decoder(final_features)
+        logits = self.decoder(final_features)
 
-        label_soft = torch.nn.functional.gumbel_softmax(decoded, tau=1.0)
+        label_soft = torch.nn.functional.gumbel_softmax(logits, tau=1.0)
         label_hard = torch.zeros_like(label_soft)
         label_hard.scatter_(-1, label_soft.argmax(dim=1, keepdim=True), 1.0)
         label_hard = label_hard - label_soft.detach() + label_soft
 
-        return label_hard, label_soft
+        return logits, label_hard, label_soft
 
 
 class VoxelGNNDiscriminator(nn.Module):
