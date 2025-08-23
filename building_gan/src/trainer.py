@@ -23,7 +23,7 @@ if os.path.abspath(os.path.join(os.path.dirname(__file__), "../../")) not in sys
 
 from building_gan.src.config import Configuration
 from building_gan.src.data import GraphDataLoaders
-from building_gan.src.models import VoxelGNNGenerator, VoxelGNNDiscriminator, compute_gradient_penalty
+from building_gan.src.models import VoxelGNNGenerator, VoxelGNNDiscriminator
 
 
 class TrainerHelper:
@@ -271,11 +271,7 @@ class TrainerHelper:
                 d_loss_real = torch.nn.functional.binary_cross_entropy(d_real, torch.ones_like(d_real))
                 d_loss_fake = torch.nn.functional.binary_cross_entropy(d_fake, torch.zeros_like(d_fake))
 
-                gp = compute_gradient_penalty(
-                    self.discriminator, local_graph, voxel_graph, label_soft, self.configuration.LAMBDA_GP
-                )
-
-                d_loss = d_loss_fake + d_loss_real + gp
+                d_loss = d_loss_fake + d_loss_real
                 d_loss /= self.configuration.ACCUMULATION_STEPS
                 d_loss.backward(retain_graph=True)
 

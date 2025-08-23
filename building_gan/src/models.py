@@ -224,35 +224,3 @@ class VoxelGNNDiscriminator(nn.Module):
         decoded = self.decoder(encoded)
 
         return decoded
-
-
-def compute_gradient_penalty(
-    discriminator: VoxelGNNDiscriminator,
-    local_graph: Batch,
-    voxel_graph: Batch,
-    label_soft: Batch,
-    lambda_gp: float,
-):
-    e = torch.rand(voxel_graph.types_onehot.shape[0], 1)
-    e = e.to(label_soft.device)
-
-    interpolated = (e * voxel_graph.types_onehot + ((1 - e) * label_soft.squeeze(0))).requires_grad_(True)
-    interpolated = interpolated.to(label_soft.device)
-
-    interpolated_hard = torch.zeros_like(interpolated)
-    interpolated_hard.scatter_(-1, interpolated.argmax(dim=1, keepdim=True), 1.0)
-
-    d_loss_interpolated = discriminator(local_graph, voxel_graph, interpolated.unsqueeze(0))
-
-    gradients = torch.autograd.grad(
-        outputs=d_loss_interpolated,
-        inputs=interpolated,
-        grad_outputs=torch.ones_like(d_loss_interpolated).to(label_soft.device),
-        create_graph=True,
-        retain_graph=True,
-        only_inputs=True,
-    )[0]
-
-    gradient_penalty = ((gradients.norm(dim=1) - 1) ** 2).mean() * lambda_gp
-
-    return gradient_penalty
