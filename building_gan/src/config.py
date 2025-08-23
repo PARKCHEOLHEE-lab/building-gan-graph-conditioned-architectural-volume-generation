@@ -70,6 +70,7 @@ class ModelConfiguration:
     LAMBDA_RATIO = 5.0
     LAMBDA_RATIO_VOID = 0.0
     LAMBDA_LABEL = 10.0
+    LAMBDA_ADV = 3.0
 
     DEVICE = "cpu"
     if torch.cuda.is_available():
