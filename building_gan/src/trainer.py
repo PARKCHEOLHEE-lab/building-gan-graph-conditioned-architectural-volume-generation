@@ -182,6 +182,8 @@ class TrainerHelper:
 
     @runtime_calculator
     def evaluate_qualitatively(self, epoch, num_samples=2, to_tensor=False):
+        plt.close("all")
+        
         train_figs = []
         validation_figs = []
         train_random_indices = torch.randint(len(self.dataloaders.train_dataloader.dataset), size=(num_samples,))
