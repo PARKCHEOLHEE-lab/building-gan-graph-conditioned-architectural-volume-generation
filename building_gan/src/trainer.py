@@ -384,6 +384,7 @@ class Trainer(TrainerHelper):
         dataloaders: GraphDataLoaders,
         optimizer_generator: torch.optim.Optimizer,
         optimizer_discriminator: torch.optim.Optimizer,
+        scheduler_generator: torch.optim.lr_scheduler,
         configuration: Configuration,
         log_dir: str = None,
     ):
@@ -392,6 +393,7 @@ class Trainer(TrainerHelper):
         self.dataloaders = dataloaders
         self.optimizer_generator = optimizer_generator
         self.optimizer_discriminator = optimizer_discriminator
+        self.scheduler_generator = scheduler_generator
         self.configuration = configuration
         self.sanity_checking = self.configuration.SANITY_CHECKING
         self.log_dir = log_dir
@@ -414,6 +416,7 @@ class Trainer(TrainerHelper):
             "discriminator": None,
             "optimizer_generator": None,
             "optimizer_discriminator": None,
+            "scheduler_generator": None,
         }
 
         if os.path.exists(os.path.join(self.log_dir, "states.pt")):
@@ -430,6 +433,7 @@ class Trainer(TrainerHelper):
 
             self.optimizer_generator.load_state_dict(self.states["optimizer_generator"])
             self.optimizer_discriminator.load_state_dict(self.states["optimizer_discriminator"])
+            self.scheduler_generator.load_state_dict(self.states["scheduler_generator"])
 
             print(f"Loaded states from {self.log_dir}")
 
@@ -490,9 +494,12 @@ class Trainer(TrainerHelper):
                             "discriminator": self.discriminator.state_dict(),
                             "optimizer_generator": self.optimizer_generator.state_dict(),
                             "optimizer_discriminator": self.optimizer_discriminator.state_dict(),
+                            "scheduler_generator": self.scheduler_generator.state_dict(),
                         },
                         os.path.join(self.log_dir, "states.pt"),
                     )
 
-                merged_fig = self.evaluate_qualitatively(epoch, num_samples=2, to_tensor=True)
-                self.summary_writer.add_image(f"epoch_{epoch}", merged_fig, epoch)
+                    merged_fig = self.evaluate_qualitatively(epoch, num_samples=2, to_tensor=True)
+                    self.summary_writer.add_image(f"epoch_{epoch}", merged_fig, epoch)
+                                
+            self.scheduler_generator.step()
