@@ -166,6 +166,9 @@ class TrainerHelper:
             ax.set_ylim(min_coords[1], max_coords[1])
             ax.set_zlim(min_coords[0], max_coords[0])
 
+        self.generator.train()
+        self.discriminator.train()
+
         if show:
             plt.show()
 
@@ -174,11 +177,8 @@ class TrainerHelper:
             fig.savefig(buf, format="png", bbox_inches="tight")
             buf.seek(0)
             fig = Image.open(buf)
-
-        self.generator.train()
-        self.discriminator.train()
-
-        return fig
+            
+            return fig
 
     @runtime_calculator
     def evaluate_qualitatively(self, epoch, num_samples=2, to_tensor=False):
@@ -294,7 +294,7 @@ class TrainerHelper:
             label_ratio_g = label_hard.squeeze(0).sum(dim=0) / voxel_graph.num_nodes
             label_ratio = voxel_graph.types_onehot.sum(dim=0) / voxel_graph.num_nodes
 
-            g_loss_ratio = torch.nn.functional.l1_loss(label_ratio_g, label_ratio)
+            g_loss_ratio = torch.nn.functional.l1_loss(label_ratio_g[:-2], label_ratio[:-2])
             g_loss_ratio *= self.configuration.LAMBDA_RATIO
 
             g_loss_ratio_voids = torch.nn.functional.l1_loss(label_ratio_g[-2:], label_ratio[-2:])
@@ -355,7 +355,7 @@ class TrainerHelper:
             label_ratio_g = label_hard.squeeze(0).sum(dim=0) / voxel_graph.num_nodes
             label_ratio = voxel_graph.types_onehot.sum(dim=0) / voxel_graph.num_nodes
 
-            g_loss_ratio = torch.nn.functional.l1_loss(label_ratio_g, label_ratio)
+            g_loss_ratio = torch.nn.functional.l1_loss(label_ratio_g[:-2], label_ratio[:-2])
             g_loss_ratio *= self.configuration.LAMBDA_RATIO
 
             g_loss_ratio_voids = torch.nn.functional.l1_loss(label_ratio_g[-2:], label_ratio[-2:])
@@ -448,7 +448,7 @@ class Trainer(TrainerHelper):
             self.summary_writer.add_text(f"configuration/{key}", str(value))
 
         epoch_start = self.states["epoch_start"]
-        epoch_end = self.states["epoch_end"]
+        epoch_end = self.configuration.EPOCHS
         best_accuracy = self.states["best_accuracy"]
 
         clear_output(wait=True)
@@ -479,8 +479,12 @@ class Trainer(TrainerHelper):
                 self.summary_writer.add_figure(f"epoch_{epoch}", train_fig, epoch)
 
             else:
+                
+                current_accuracy = (
+                    accuracy_mean_train * self.configuration.ACCURACY_TRAIN_WEIGHT
+                    + accuracy_mean_validation * self.configuration.ACCURACY_VALIDATION_WEIGHT
+                )
                 # Save the best states
-                current_accuracy = accuracy_mean_train * 0.5 + accuracy_mean_validation
                 if best_accuracy < current_accuracy:
                     print(f"Best accuracy updated: {best_accuracy} -> {current_accuracy}")
                     best_accuracy = current_accuracy
