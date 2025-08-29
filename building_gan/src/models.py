@@ -12,8 +12,12 @@ from building_gan.src.config import Configuration
 
 
 class VoxelGNNGenerator(nn.Module):
-    def __init__(self, configuration: Configuration):
+    def __init__(self, configuration: Configuration, local_graph_dim: int, voxel_graph_dim: int):
         super().__init__()
+        
+        self.configuration = configuration
+        self.local_graph_dim = local_graph_dim
+        self.voxel_graph_dim = voxel_graph_dim
 
         if configuration.GENERATOR_CONV_TYPE == "GCNCONV":
             conv = tgnn.GCNConv
@@ -26,26 +30,26 @@ class VoxelGNNGenerator(nn.Module):
         else:
             raise ValueError(f"Invalid conv_type: {configuration.GENERATOR_CONV_TYPE}")
 
-        local_graph_encoder_modules = []
-        local_graph_encoder_modules += [
-            nn.Linear(configuration.LOCAL_GRAPH_DIM, configuration.LOCAL_ENCODER_HIDDEN_DIM),
+        matched_features_encoder_modules = []
+        matched_features_encoder_modules += [
+            nn.Linear(local_graph_dim, configuration.LOCAL_ENCODER_HIDDEN_DIM),
             nn.BatchNorm1d(configuration.LOCAL_ENCODER_HIDDEN_DIM),
             nn.LeakyReLU(0.2),
         ]
 
         for _ in range(configuration.LOCAL_GRAPH_ENCODER_REPEAT):
-            local_graph_encoder_modules += [
+            matched_features_encoder_modules += [
                 nn.Linear(configuration.LOCAL_ENCODER_HIDDEN_DIM, configuration.LOCAL_ENCODER_HIDDEN_DIM),
                 nn.BatchNorm1d(configuration.LOCAL_ENCODER_HIDDEN_DIM),
                 nn.LeakyReLU(0.2),
             ]
 
-        self.local_graph_encoder = nn.Sequential(*local_graph_encoder_modules)
+        self.matched_features_encoder = nn.Sequential(*matched_features_encoder_modules)
 
         self.mlp_encoder_modules = []
         self.mlp_encoder_modules += [
             nn.Linear(
-                configuration.LOCAL_ENCODER_HIDDEN_DIM + configuration.VOXEL_GRAPH_DIM + configuration.Z_DIM,
+                configuration.LOCAL_ENCODER_HIDDEN_DIM + voxel_graph_dim + configuration.Z_DIM,
                 configuration.GENERATOR_HIDDEN_DIM,
             ),
             nn.BatchNorm1d(configuration.GENERATOR_HIDDEN_DIM),
@@ -88,7 +92,7 @@ class VoxelGNNGenerator(nn.Module):
         self.decoder = nn.Sequential(
             nn.Linear(
                 configuration.LOCAL_ENCODER_HIDDEN_DIM
-                + configuration.VOXEL_GRAPH_DIM
+                + voxel_graph_dim
                 + configuration.Z_DIM
                 + out_channels
                 + configuration.GENERATOR_HIDDEN_DIM,
@@ -124,15 +128,22 @@ class VoxelGNNGenerator(nn.Module):
             if local_mask.sum() > 0:
                 matched_x[voxel_mask] = local_graph.x[local_mask].mean(dim=0)
 
-        encoded_local = self.local_graph_encoder(matched_x.to(self.local_graph_encoder[0].weight.device))
+        encoded_matched_features = self.matched_features_encoder(
+            matched_x.to(self.matched_features_encoder[0].weight.device)
+        )
+
         combined_features = torch.cat(
-            [encoded_local, voxel_graph.x.to(encoded_local.device), z.squeeze(0).to(encoded_local.device)], dim=-1
+            [
+                encoded_matched_features, 
+                voxel_graph.x.to(encoded_matched_features.device), 
+                z.squeeze(0).to(encoded_matched_features.device)
+            ], dim=-1
         )
 
         x = self.mlp_encoder(combined_features)
         encoded = self.encoder(x=x, edge_index=voxel_graph.edge_index)
 
-        final_features = torch.cat([encoded, x, encoded_local, voxel_graph.x, z.squeeze(0)], dim=-1)
+        final_features = torch.cat([encoded, x, encoded_matched_features, voxel_graph.x, z.squeeze(0)], dim=-1)
 
         logits = self.decoder(final_features)
 
@@ -145,8 +156,12 @@ class VoxelGNNGenerator(nn.Module):
 
 
 class VoxelGNNDiscriminator(nn.Module):
-    def __init__(self, configuration: Configuration):
+    def __init__(self, configuration: Configuration, local_graph_dim: int, voxel_graph_dim: int):
         super().__init__()
+        
+        self.configuration = configuration
+        self.local_graph_dim = local_graph_dim
+        self.voxel_graph_dim = voxel_graph_dim
 
         if configuration.DISCRIMINATOR_CONV_TYPE == "GCNCONV":
             conv = tgnn.GCNConv
@@ -161,7 +176,7 @@ class VoxelGNNDiscriminator(nn.Module):
 
         self.mlp_encoder = nn.Sequential(
             nn.Linear(
-                configuration.LOCAL_GRAPH_DIM + configuration.VOXEL_GRAPH_DIM + configuration.NUM_CLASSES,
+                local_graph_dim + voxel_graph_dim + configuration.NUM_CLASSES,
                 configuration.DISCRIMINATOR_HIDDEN_DIM,
             ),
             nn.ReLU(True),

@@ -19,6 +19,7 @@ class LocalGraphData:
         local_graph_type_ratio_per_node = local_graph_types_onehot * local_graph_data["type_ratio"]
         local_graph_far_per_node = torch.zeros(local_graph_types_onehot.shape[0], 1) + local_graph_data["far"]
         local_graph_floor_levels_normalized = local_graph_data["local_graph_floor_levels_normalized"].unsqueeze(0).t()
+        local_graph_site_area_per_node_normalized = local_graph_data["site_area_normalized"].repeat(local_graph_types_onehot.shape[0]).unsqueeze(0).t()
 
         self.x = torch.cat(
             [
@@ -26,11 +27,14 @@ class LocalGraphData:
                 local_graph_type_ratio_per_node,
                 local_graph_far_per_node,
                 local_graph_floor_levels_normalized,
+                local_graph_site_area_per_node_normalized,
             ],
             dim=1,
         )
 
         self.data_number = local_graph_data["data_number"]
+        self.site_area = local_graph_data["site_area"]
+        self.site_area_normalized = local_graph_data["site_area_normalized"]
         self.local_graph_types_onehot = local_graph_types_onehot
         self.edge_index = local_graph_data["local_graph_edge_indices"]
         self.local_graph_floor_levels = local_graph_data["local_graph_floor_levels"]
@@ -47,17 +51,21 @@ class VoxelGraphData:
         voxel_graph_features = voxel_graph_data["voxel_graph_features"]
         voxel_graph_far_per_node = torch.zeros(voxel_graph_types_onehot.shape[0], 1) + voxel_graph_data["far"]
         voxel_graph_floor_levels_normalized = voxel_graph_data["voxel_graph_floor_levels_normalized"].unsqueeze(0).t()
+        voxel_graph_site_area_per_node_normalized = voxel_graph_data["site_area_normalized"].repeat(voxel_graph_types_onehot.shape[0]).unsqueeze(0).t()
 
         self.x = torch.cat(
             [
                 voxel_graph_features,
                 voxel_graph_far_per_node,
                 voxel_graph_floor_levels_normalized,
+                voxel_graph_site_area_per_node_normalized,
             ],
             dim=1,
         )
 
         self.data_number = voxel_graph_data["data_number"]
+        self.site_area = voxel_graph_data["site_area"]
+        self.site_area_normalized = voxel_graph_data["site_area_normalized"]
         self.voxel_graph_types = voxel_graph_data["voxel_graph_types"]
         self.voxel_graph_types_onehot = voxel_graph_types_onehot
         self.edge_index = voxel_graph_data["voxel_graph_edge_indices"]
@@ -115,8 +123,9 @@ class GraphDataset(Dataset):
                     center=local_graph.local_graph_center,
                     type=local_graph.local_graph_types,
                     type_id=local_graph.local_graph_type_ids,
-                    data_number=[local_graph.data_number] * local_graph.x.shape[0],
                     floor=local_graph.local_graph_floor_levels,
+                    data_number=[local_graph.data_number] * local_graph.x.shape[0],
+                    site_area=local_graph.site_area.repeat(local_graph.x.shape[0])
                 )
             )
 
@@ -133,6 +142,7 @@ class GraphDataset(Dataset):
                     location=voxel_graph.voxel_graph_location,
                     node_ratio=voxel_graph.voxel_graph_node_ratio,
                     data_number=[voxel_graph.data_number] * voxel_graph.x.shape[0],
+                    site_area=voxel_graph.site_area.repeat(voxel_graph.x.shape[0])
                 )
             )
 
@@ -234,7 +244,7 @@ class DataCreatorHelper:
 
         local_graph_node_cluster = torch.tensor(local_graph_node_cluster)
         local_graph_floor_levels = torch.tensor(local_graph_floor_levels)
-        local_graph_floor_levels_normalized = local_graph_floor_levels / configuration.NORMALIZATION_FACTOR
+        local_graph_floor_levels_normalized = local_graph_floor_levels / configuration.NORMALIZATION_FACTOR_FLOOR_LEVEL
         local_graph_center = torch.tensor(local_graph_center)
         local_graph_types = torch.tensor(local_graph_types)
         local_graph_type_ids = torch.tensor(local_graph_type_ids)
@@ -256,6 +266,8 @@ class DataCreatorHelper:
 
         # process global graph data
         far = torch.tensor([global_graph_data["far"]])
+        site_area = torch.tensor([global_graph_data["site_area"]])
+        site_area_normalized = site_area / configuration.NORMALIZATION_FACTOR_SITE
 
         global_graph_nodes = global_graph_data["global_node"]
         type_ratio = [0] * configuration.NUM_CLASSES
@@ -284,17 +296,15 @@ class DataCreatorHelper:
 
             voxel_graph_features.append(
                 [
-                    *[coo / configuration.NORMALIZATION_FACTOR for coo in voxel_node["coordinate"]],
-                    *[dim / configuration.NORMALIZATION_FACTOR for dim in voxel_node["dimension"]],
-                    *[loc / configuration.NORMALIZATION_FACTOR for loc in voxel_node["location"]],
+                    *[coo / configuration.NORMALIZATION_FACTOR_COORDINATE for coo in voxel_node["coordinate"]],
+                    *[dim / configuration.NORMALIZATION_FACTOR_DIMENSION for dim in voxel_node["dimension"]],
+                    *[loc / configuration.NORMALIZATION_FACTOR_LOCATION for loc in voxel_node["location"]],
                 ]
             )
 
             voxel_node_type = voxel_node["type"]
             if voxel_node_type == configuration.VOID_OLD:
                 voxel_node_type = configuration.VOID
-            elif voxel_node_type == configuration.NOT_ALLOWED_OLD:
-                voxel_node_type = configuration.NOT_ALLOWED
 
             voxel_graph_node_ratio[voxel_node_type] += 1
 
@@ -326,7 +336,7 @@ class DataCreatorHelper:
         voxel_graph_types = torch.tensor(voxel_graph_types)
         voxel_graph_types_onehot = torch.tensor(voxel_graph_types_onehot)
         voxel_graph_floor_levels = torch.tensor(voxel_graph_floor_levels)
-        voxel_graph_floor_levels_normalized = voxel_graph_floor_levels / configuration.NORMALIZATION_FACTOR
+        voxel_graph_floor_levels_normalized = voxel_graph_floor_levels / configuration.NORMALIZATION_FACTOR_FLOOR_LEVEL
         voxel_graph_features = torch.tensor(voxel_graph_features)
         voxel_graph_node_coordinate = torch.tensor(voxel_graph_node_coordinate)
         voxel_graph_node_dimension = torch.tensor(voxel_graph_node_dimension)
@@ -346,6 +356,8 @@ class DataCreatorHelper:
 
         local_graph_data = {
             "far": far,
+            "site_area": site_area,
+            "site_area_normalized": site_area_normalized,
             "type_ratio": type_ratio,
             "local_graph_node_cluster": local_graph_node_cluster,
             "local_graph_types_onehot": local_graph_types_onehot,
@@ -360,6 +372,8 @@ class DataCreatorHelper:
 
         voxel_graph_data = voxel_graph_data = {
             "far": far,
+            "site_area": site_area,
+            "site_area_normalized": site_area_normalized,
             "voxel_graph_types": voxel_graph_types,
             "voxel_graph_types_onehot": voxel_graph_types_onehot,
             "voxel_graph_floor_levels": voxel_graph_floor_levels,

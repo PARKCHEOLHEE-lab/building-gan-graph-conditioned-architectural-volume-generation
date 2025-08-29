@@ -8,7 +8,6 @@ from typing import List
 
 class ProgramMap:
     VOID_OLD = -1
-    NOT_ALLOWED_OLD = -2
 
     LOBBY_CORRIDOR = 0
     RESTROOM = 1
@@ -17,7 +16,6 @@ class ProgramMap:
     OFFICE = 4
     MECHANICAL_ROOM = 5
     VOID = 6
-    NOT_ALLOWED = 7
 
     COLORS = {
         LOBBY_CORRIDOR: "brown",
@@ -27,10 +25,9 @@ class ProgramMap:
         OFFICE: "blue",
         MECHANICAL_ROOM: "orange",
         VOID: "gray",
-        NOT_ALLOWED: "white",
     }
 
-    NUM_CLASSES = 8
+    NUM_CLASSES = len(COLORS)
 
 
 class DataConfiguration:
@@ -41,7 +38,11 @@ class DataConfiguration:
 
     SAVE_DATA_PATH = os.path.abspath(os.path.join(os.path.dirname(__file__), "../data/6types-processed_data"))
 
-    NORMALIZATION_FACTOR = 50
+    NORMALIZATION_FACTOR_FLOOR_LEVEL = 10
+    NORMALIZATION_FACTOR_DIMENSION = 11
+    NORMALIZATION_FACTOR_LOCATION = 11
+    NORMALIZATION_FACTOR_COORDINATE = 42
+    NORMALIZATION_FACTOR_SITE = 1600
 
     LOCAL_DATA_SUFFIX = "_local.pt"
     VOXEL_DATA_SUFFIX = "_voxel.pt"
@@ -60,7 +61,7 @@ class ModelConfiguration:
     DATA_POINT = None
     DATA_SLICER = int(1e10)
     BATCH_SIZE = 64
-    ACCUMULATION_STEPS = 1
+    ACCUMULATION_STEPS = 8
 
     N_CRITIC = 5
     LEARNING_RATE_GENERATOR = 0.0002
@@ -69,12 +70,15 @@ class ModelConfiguration:
     SCHEDULER_ETA_MIN_MULTIPLIER = 0.0001
 
     LAMBDA_RATIO = 1.0
-    LAMBDA_RATIO_VOID = 5.0
+    LAMBDA_RATIO_VOID = 7.0
     LAMBDA_LABEL = 3.0
     LAMBDA_ADV = 2.0
+    LAMBDA_FAR = 7.0
     
-    ACCURACY_TRAIN_WEIGHT = 0.5
-    ACCURACY_VALIDATION_WEIGHT = 1.0
+    F1_SCORE_TRAIN_WEIGHT = 0.5
+    F1_SCORE_VALIDATION_WEIGHT = 1.0
+    
+    F1_SCORE_AVERAGE = "weighted"
 
     DEVICE = "cpu"
     if torch.cuda.is_available():
@@ -91,10 +95,8 @@ class ModelConfiguration:
     DISCRIMINATOR_HIDDEN_DIM = 64
 
     Z_DIM = 128
-    LOCAL_GRAPH_DIM = 18
     LOCAL_GRAPH_ENCODER_REPEAT = 4
     LOCAL_ENCODER_HIDDEN_DIM = 128
-    VOXEL_GRAPH_DIM = 11
     ENCODER_DROPOUT_RATE = 0.2
 
     GENERATOR_MLP_ENCODER_REPEAT = 4
