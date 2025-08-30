@@ -13,8 +13,7 @@ from building_gan.src.models import VoxelGNNGenerator, VoxelGNNDiscriminator
 from building_gan.src.trainer import Trainer
 
 configuration = Configuration()
-configuration.EPOCHS = 3000
-configuration.DATA_SLICER = 1000  # use all data
+configuration.EPOCHS = 1000
 
 configuration.set_seed()
 
@@ -46,7 +45,7 @@ trainer = Trainer(
     optimizer_discriminator=optimizer_discriminator,
     scheduler_generator=scheduler_generator,
     configuration=configuration,
-    log_dir=os.path.join(configuration.LOG_DIR, "farloss")
+    log_dir=os.path.join(configuration.LOG_DIR, "_base")
 )
 
 trainer.train()

@@ -11,8 +11,8 @@ from building_gan.src.models import VoxelGNNGenerator, VoxelGNNDiscriminator
 from building_gan.src.trainer import Trainer
 
 configuration = Configuration(sanity_checking=True)
-configuration.EPOCHS = 3000
-configuration.DATA_POINT = 7777
+configuration.EPOCHS = 5000
+configuration.DATA_POINT = 4001
 configuration.set_seed()
 
 dataloaders = GraphDataLoaders(configuration=configuration)
