@@ -209,7 +209,7 @@ class VoxelGNNDiscriminator(nn.Module):
 
         self.encoder = tgnn.Sequential(input_args=configuration.INPUT_ARGS, modules=self.encoder_modules)
 
-        self.decoder = nn.Sequential(
+        self.decoder_modules = [
             nn.Linear(configuration.DISCRIMINATOR_HIDDEN_DIM, configuration.DISCRIMINATOR_HIDDEN_DIM // 2),
             nn.ReLU(True),
             nn.Linear(configuration.DISCRIMINATOR_HIDDEN_DIM // 2, configuration.DISCRIMINATOR_HIDDEN_DIM // 4),
@@ -217,8 +217,12 @@ class VoxelGNNDiscriminator(nn.Module):
             nn.Linear(configuration.DISCRIMINATOR_HIDDEN_DIM // 4, configuration.DISCRIMINATOR_HIDDEN_DIM // 8),
             nn.ReLU(True),
             nn.Linear(configuration.DISCRIMINATOR_HIDDEN_DIM // 8, 1),
-            nn.Sigmoid(),
-        )
+        ]
+
+        if not configuration.USE_WGANGP:
+            self.decoder_modules.append(nn.Sigmoid())
+
+        self.decoder = nn.Sequential(*self.decoder_modules)
 
         self.to(configuration.DEVICE)
 

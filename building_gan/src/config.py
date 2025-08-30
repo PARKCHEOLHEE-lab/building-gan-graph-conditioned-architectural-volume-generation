@@ -60,8 +60,7 @@ class ModelConfiguration:
 
     DATA_POINT = None
     DATA_SLICER = int(1e10)
-    BATCH_SIZE = 64
-    ACCUMULATION_STEPS = 8
+    BATCH_SIZE = 512
 
     N_CRITIC = 5
     LEARNING_RATE_GENERATOR = 0.0002
@@ -69,16 +68,17 @@ class ModelConfiguration:
     
     SCHEDULER_ETA_MIN_MULTIPLIER = 0.0001
 
-    LAMBDA_RATIO = 1.0
-    LAMBDA_RATIO_VOID = 7.0
-    LAMBDA_LABEL = 3.0
-    LAMBDA_ADV = 2.0
-    LAMBDA_FAR = 7.0
+    LAMBDA_RATIO = 3.0
+    LAMBDA_RATIO_VOID = 10.0
+    LAMBDA_LABEL = 0.0
+    LAMBDA_ADV = 1.0
+    LAMBDA_FAR = 5.0
+    LAMBDA_GP = 10.0
     
     F1_SCORE_TRAIN_WEIGHT = 0.5
     F1_SCORE_VALIDATION_WEIGHT = 1.0
     
-    F1_SCORE_AVERAGE = "weighted"
+    METRICS_AVERAGE = "weighted"
 
     DEVICE = "cpu"
     if torch.cuda.is_available():
@@ -102,6 +102,8 @@ class ModelConfiguration:
     GENERATOR_MLP_ENCODER_REPEAT = 4
 
     INPUT_ARGS = "x, edge_index"
+    
+    USE_WGANGP = True
 
 
 class Configuration(ProgramMap, DataConfiguration, ModelConfiguration):

@@ -72,7 +72,7 @@ class TrainerHelper:
         f1_score = metrics.f1_score(
             voxel_graph.type.cpu(), 
             voxel_types_generated.cpu(), 
-            average=self.configuration.F1_SCORE_AVERAGE,
+            average=self.configuration.METRICS_AVERAGE,
         )
         
         fig = plt.figure(figsize=(20, 5))
@@ -255,7 +255,72 @@ class TrainerHelper:
 
         return merged_fig
     
-    def _compute_far_loss(self, voxel_graph, voxel_types_generated):
+    def _compute_gradient_penalty(
+        self,
+        local_graph: Batch,
+        voxel_graph: Batch,
+        label_soft: Batch,
+    ):
+        
+        e = torch.rand(voxel_graph.types_onehot.shape[0], 1)
+        e = e.to(label_soft.device)
+
+        interpolated = (e * voxel_graph.types_onehot + ((1 - e) * label_soft.squeeze(0))).requires_grad_(True)
+        interpolated = interpolated.to(label_soft.device)
+
+        d_loss_interpolated = self.discriminator(local_graph, voxel_graph, interpolated.unsqueeze(0))
+
+        gradients = torch.autograd.grad(
+            outputs=d_loss_interpolated,
+            inputs=interpolated,
+            grad_outputs=torch.ones_like(d_loss_interpolated).to(label_soft.device),
+            create_graph=True,
+            only_inputs=True,
+        )[0]
+
+        gradient_penalty = ((gradients.norm(dim=1) - 1) ** 2).mean() * self.configuration.LAMBDA_GP
+
+        return gradient_penalty
+    
+    def _compute_discriminator_loss(self, local_graph, voxel_graph, label_hard, label_soft):
+        d_real = self.discriminator(local_graph, voxel_graph, voxel_graph.types_onehot.unsqueeze(0))
+        d_fake = self.discriminator(local_graph, voxel_graph, label_hard)
+        
+        if self.configuration.USE_WGANGP:
+            d_loss = d_fake.mean() - d_real.mean()
+            d_loss += self._compute_gradient_penalty(local_graph, voxel_graph, label_soft)
+        
+        else:
+            d_loss_real = torch.nn.functional.binary_cross_entropy(d_real, torch.ones_like(d_real))
+            d_loss_fake = torch.nn.functional.binary_cross_entropy(d_fake, torch.zeros_like(d_fake))
+
+            d_loss = d_loss_fake + d_loss_real
+            
+        return d_loss
+    
+    def _compute_generator_loss(self, local_graph, voxel_graph, logits, label_hard):
+
+        d_fake = self.discriminator(local_graph, voxel_graph, label_hard)
+        if self.configuration.USE_WGANGP:
+            g_loss_adv = -d_fake.mean()
+        
+        else:
+            g_loss_adv = torch.nn.functional.binary_cross_entropy(d_fake, torch.ones_like(d_fake))
+            g_loss_adv *= self.configuration.LAMBDA_ADV
+        
+        g_loss_label = torch.nn.functional.cross_entropy(logits, voxel_graph.type)
+        g_loss_label *= self.configuration.LAMBDA_LABEL
+
+        label_ratio_g = label_hard.squeeze(0).sum(dim=0) / voxel_graph.num_nodes
+        label_ratio = voxel_graph.types_onehot.sum(dim=0) / voxel_graph.num_nodes
+
+        g_loss_ratio = torch.nn.functional.l1_loss(label_ratio_g[:-2], label_ratio[:-2])
+        g_loss_ratio *= self.configuration.LAMBDA_RATIO
+
+        g_loss_ratio_voids = torch.nn.functional.l1_loss(label_ratio_g[-2:], label_ratio[-2:])
+        g_loss_ratio_voids *= self.configuration.LAMBDA_RATIO_VOID
+        
+        voxel_types_generated = label_hard.squeeze(0).argmax(dim=1)
             
         far_unique = []
         far_unique_generated = []
@@ -278,10 +343,42 @@ class TrainerHelper:
             
             si = ei
             
-        loss_far = torch.nn.functional.l1_loss(torch.tensor(far_unique_generated), torch.tensor(far_unique))
-        loss_far *= self.configuration.LAMBDA_FAR
+        g_loss_far = torch.nn.functional.l1_loss(torch.tensor(far_unique_generated), torch.tensor(far_unique))
+        g_loss_far *= self.configuration.LAMBDA_FAR
         
-        return loss_far
+        g_loss = g_loss_adv + g_loss_ratio + g_loss_label + g_loss_ratio_voids + g_loss_far
+        
+        return g_loss
+    
+    def _compute_metrics(self, voxel_graph, label_hard):
+        
+        voxel_types = voxel_graph.type.cpu()
+        voxel_types_generated = label_hard.squeeze(0).argmax(dim=1).cpu()
+            
+        f1_score = metrics.f1_score(
+            voxel_types, 
+            voxel_types_generated, 
+            average=self.configuration.METRICS_AVERAGE,
+        )
+        
+        precision_score = metrics.precision_score(
+            voxel_types, 
+            voxel_types_generated,
+            average=self.configuration.METRICS_AVERAGE,
+        )
+        
+        recall_score = metrics.recall_score(
+            voxel_types, 
+            voxel_types_generated,
+            average=self.configuration.METRICS_AVERAGE,
+        )
+        
+        accuracy_score = metrics.accuracy_score(
+            voxel_types,
+            voxel_types_generated,
+        )
+        
+        return f1_score, precision_score, recall_score, accuracy_score
 
     @runtime_calculator
     def _train_each_epoch(self):
@@ -290,11 +387,13 @@ class TrainerHelper:
 
         g_loss_total_train = []
         d_loss_total_train = []
+
         f1_score_total_train = []
+        precision_score_total_train = []
+        recall_score_total_train = []
+        accuracy_score_total_train = []
 
-        accumulation_step = 1
-
-        for gi, (local_graph, voxel_graph) in enumerate(self.dataloaders.train_dataloader):
+        for local_graph, voxel_graph in self.dataloaders.train_dataloader:
             # Set device
             local_graph = local_graph.to(self.configuration.DEVICE)
             voxel_graph = voxel_graph.to(self.configuration.DEVICE)
@@ -303,98 +402,68 @@ class TrainerHelper:
 
             # Train discriminator
             for _ in range(self.configuration.N_CRITIC):
-                # Generate fake data
 
-                z = torch.randn(1, voxel_graph.num_nodes, self.configuration.Z_DIM).to(self.configuration.DEVICE)
-                logits, label_hard, label_soft = self.generator(local_graph, voxel_graph, z)
-                label_hard = label_hard.unsqueeze(0)
-                label_soft = label_soft.unsqueeze(0)
+                with torch.no_grad():
+                    z = torch.randn(1, voxel_graph.num_nodes, self.configuration.Z_DIM).to(self.configuration.DEVICE)
+                    logits, label_hard, label_soft = self.generator(local_graph, voxel_graph, z)
+                    label_hard = label_hard.unsqueeze(0)
+                    label_soft = label_soft.unsqueeze(0)
+                
+                self.optimizer_discriminator.zero_grad()
 
-                # Compute discriminator loss
-                d_real = self.discriminator(local_graph, voxel_graph, voxel_graph.types_onehot.unsqueeze(0))
-                d_fake = self.discriminator(local_graph, voxel_graph, label_hard.detach())
+                d_loss = self._compute_discriminator_loss(local_graph, voxel_graph, label_hard, label_soft)
+                d_loss.backward()
+                d_loss_total_train.append(d_loss.item())
 
-                d_loss_real = torch.nn.functional.binary_cross_entropy(d_real, torch.ones_like(d_real))
-                d_loss_fake = torch.nn.functional.binary_cross_entropy(d_fake, torch.zeros_like(d_fake))
-
-                d_loss = d_loss_fake + d_loss_real
-                d_loss /= self.configuration.ACCUMULATION_STEPS
-                d_loss.backward(retain_graph=True)
-
-                if (
-                    (accumulation_step % self.configuration.ACCUMULATION_STEPS == 0) 
-                    or gi == len(self.dataloaders.train_dataloader) - 1
-                    or self.sanity_checking
-                ):
-                    self.optimizer_discriminator.step()
-                    self.optimizer_discriminator.zero_grad()
-
-                d_loss_total_train.append(d_loss.item() * self.configuration.ACCUMULATION_STEPS)
-
+                self.optimizer_discriminator.step()
+                
             # Train generator
-            d_fake = self.discriminator(local_graph, voxel_graph, label_hard)
-            g_loss_adv = torch.nn.functional.binary_cross_entropy(d_fake, torch.ones_like(d_fake))
-            g_loss_adv *= self.configuration.LAMBDA_ADV
-
-            g_loss_label = torch.nn.functional.cross_entropy(logits, voxel_graph.type)
-            g_loss_label *= self.configuration.LAMBDA_LABEL
-
-            label_ratio_g = label_hard.squeeze(0).sum(dim=0) / voxel_graph.num_nodes
-            label_ratio = voxel_graph.types_onehot.sum(dim=0) / voxel_graph.num_nodes
-
-            g_loss_ratio = torch.nn.functional.l1_loss(label_ratio_g[:-2], label_ratio[:-2])
-            g_loss_ratio *= self.configuration.LAMBDA_RATIO
-
-            g_loss_ratio_voids = torch.nn.functional.l1_loss(label_ratio_g[-2:], label_ratio[-2:])
-            g_loss_ratio_voids *= self.configuration.LAMBDA_RATIO_VOID
+            z = torch.randn(1, voxel_graph.num_nodes, self.configuration.Z_DIM).to(self.configuration.DEVICE)
+            logits, label_hard, label_soft = self.generator(local_graph, voxel_graph, z)
+            label_hard = label_hard.unsqueeze(0)
+            label_soft = label_soft.unsqueeze(0)
             
-            voxel_types_generated = label_hard.squeeze(0).argmax(dim=1)
-            g_loss_far = self._compute_far_loss(voxel_graph, voxel_types_generated)
+            self.optimizer_generator.zero_grad()
 
-            g_loss = g_loss_adv + g_loss_ratio + g_loss_label + g_loss_ratio_voids + g_loss_far
-            g_loss /= self.configuration.ACCUMULATION_STEPS
+            g_loss = self._compute_generator_loss(local_graph, voxel_graph, logits, label_hard)
             g_loss.backward()
-            
-            if (
-                (accumulation_step % self.configuration.ACCUMULATION_STEPS == 0) 
-                or gi == len(self.dataloaders.train_dataloader) - 1
-                or self.sanity_checking
-            ):
-                self.optimizer_generator.step()
-                self.optimizer_generator.zero_grad()
+            g_loss_total_train.append(g_loss.item())
 
-            g_loss_total_train.append(g_loss.item() * self.configuration.ACCUMULATION_STEPS)  # Scale back for logging
-
+            self.optimizer_generator.step()
             
-            f1_score = metrics.f1_score(
-                voxel_graph.type.cpu(), 
-                voxel_types_generated.cpu(), 
-                average=self.configuration.F1_SCORE_AVERAGE,
-            )
-            
+            f1_score, precision_score, recall_score, accuracy_score = self._compute_metrics(voxel_graph, label_hard)
             f1_score_total_train.append(f1_score)
+            precision_score_total_train.append(precision_score)
+            recall_score_total_train.append(recall_score)
+            accuracy_score_total_train.append(accuracy_score)
             
-            accumulation_step += 1
+        g_loss_train = torch.tensor(g_loss_total_train).mean().item()
+        d_loss_train = torch.tensor(d_loss_total_train).mean().item()
 
-        g_loss_mean_train = torch.tensor(g_loss_total_train).mean().item()
-        d_loss_mean_train = torch.tensor(d_loss_total_train).mean().item()
-        f1_score_mean_train = torch.tensor(f1_score_total_train).mean().item()
+        f1_score_train = torch.tensor(f1_score_total_train).mean().item()
+        precision_score_train = torch.tensor(precision_score_total_train).mean().item()
+        recall_score_train = torch.tensor(recall_score_total_train).mean().item()
+        accuracy_score_train = torch.tensor(accuracy_score_total_train).mean().item()
 
-        return g_loss_mean_train, d_loss_mean_train, f1_score_mean_train
+        return g_loss_train, d_loss_train, f1_score_train, precision_score_train, recall_score_train, accuracy_score_train
 
     @runtime_calculator
     @torch.no_grad()
     def _validate_each_epoch(self):
         if self.sanity_checking:
-            return 0, 0
+            return 0, 0, 0, 0
 
         self.generator.eval()
         self.discriminator.eval()
 
         g_loss_total_validation = []
-        f1_score_total_validation = []
 
-        for _, (local_graph, voxel_graph) in enumerate(self.dataloaders.validation_dataloader):
+        f1_score_total_validation = []
+        precision_score_total_validation = []
+        recall_score_total_validation = []
+        accuracy_score_total_validation = []
+
+        for local_graph, voxel_graph in self.dataloaders.validation_dataloader:
             local_graph = local_graph.to(self.configuration.DEVICE)
             voxel_graph = voxel_graph.to(self.configuration.DEVICE)
 
@@ -404,44 +473,27 @@ class TrainerHelper:
             logits, label_hard, label_soft = self.generator(local_graph, voxel_graph, z)
             label_hard = label_hard.unsqueeze(0)
             label_soft = label_soft.unsqueeze(0)
-
-            d_fake = self.discriminator(local_graph, voxel_graph, label_hard)
-            g_loss_adv = torch.nn.functional.binary_cross_entropy(d_fake, torch.ones_like(d_fake))
-            g_loss_adv *= self.configuration.LAMBDA_ADV
-
-            g_loss_label = torch.nn.functional.cross_entropy(logits, voxel_graph.type)
-            g_loss_label *= self.configuration.LAMBDA_LABEL
-
-            label_ratio_g = label_hard.squeeze(0).sum(dim=0) / voxel_graph.num_nodes
-            label_ratio = voxel_graph.types_onehot.sum(dim=0) / voxel_graph.num_nodes
-
-            g_loss_ratio = torch.nn.functional.l1_loss(label_ratio_g[:-2], label_ratio[:-2])
-            g_loss_ratio *= self.configuration.LAMBDA_RATIO
-
-            g_loss_ratio_voids = torch.nn.functional.l1_loss(label_ratio_g[-2:], label_ratio[-2:])
-            g_loss_ratio_voids *= self.configuration.LAMBDA_RATIO_VOID
             
-            voxel_types_generated = label_hard.squeeze(0).argmax(dim=1)
-            g_loss_far = self._compute_far_loss(voxel_graph, voxel_types_generated)
-            
-            g_loss = g_loss_adv + g_loss_ratio + g_loss_label + g_loss_ratio_voids + g_loss_far
+            g_loss = self._compute_generator_loss(local_graph, voxel_graph, logits, label_hard)
             g_loss_total_validation.append(g_loss.item())
             
-            f1_score = metrics.f1_score(
-                voxel_graph.type.cpu(), 
-                voxel_types_generated.cpu(), 
-                average=self.configuration.F1_SCORE_AVERAGE,
-            )
-            
+            f1_score, precision_score, recall_score, accuracy_score = self._compute_metrics(voxel_graph, label_hard)
             f1_score_total_validation.append(f1_score)
+            precision_score_total_validation.append(precision_score)
+            recall_score_total_validation.append(recall_score)
+            accuracy_score_total_validation.append(accuracy_score)
             
         g_loss_mean_validation = torch.tensor(g_loss_total_validation).mean().item()
-        f1_score_mean_validation = torch.tensor(f1_score_total_validation).mean().item()
+
+        f1_score_validation = torch.tensor(f1_score_total_validation).mean().item()
+        precision_score_validation = torch.tensor(precision_score_total_validation).mean().item()
+        recall_score_validation = torch.tensor(recall_score_total_validation).mean().item()
+        accuracy_score_validation = torch.tensor(accuracy_score_total_validation).mean().item()
 
         self.generator.train()
         self.discriminator.train()
 
-        return g_loss_mean_validation, f1_score_mean_validation
+        return g_loss_mean_validation, f1_score_validation, precision_score_validation, recall_score_validation, accuracy_score_validation
 
 
 class Trainer(TrainerHelper):
@@ -466,10 +518,6 @@ class Trainer(TrainerHelper):
         self.sanity_checking = self.configuration.SANITY_CHECKING
         self.log_dir = log_dir
 
-        if not self.sanity_checking and torch.cuda.device_count() > 1:
-            self.generator = torch.nn.DataParallel(self.generator)
-            self.discriminator = torch.nn.DataParallel(self.discriminator)
-
         if self.log_dir is None:
             self.log_dir = os.path.join(
                 self.configuration.LOG_DIR,
@@ -480,25 +528,26 @@ class Trainer(TrainerHelper):
             "epoch_start": 1,
             "epoch_end": self.configuration.EPOCHS + 1,
             "best_f1_score": 0,
+            "f1_score_train": 0,
+            "f1_score_validation": 0,
+            "precision_score_train": 0,
+            "precision_score_validation": 0,
+            "recall_score_train": 0,
+            "recall_score_validation": 0,
+            "accuracy_score_train": 0,
+            "accuracy_score_validation": 0,
             "generator": None,
             "discriminator": None,
             "optimizer_generator": None,
             "optimizer_discriminator": None,
             "scheduler_generator": None,
+
         }
 
         if os.path.exists(os.path.join(self.log_dir, "states.pt")):
             self.states = torch.load(os.path.join(self.log_dir, "states.pt"))
-
-            if torch.cuda.device_count() >= 2:
-                self.generator.load_state_dict(self.states["generator"])
-                self.discriminator.load_state_dict(self.states["discriminator"])
-            else:
-                generator_state = {k.replace("module.", ""): v for k, v in self.states["generator"].items()}
-                discriminator_state = {k.replace("module.", ""): v for k, v in self.states["discriminator"].items()}
-                self.generator.load_state_dict(generator_state)
-                self.discriminator.load_state_dict(discriminator_state)
-
+            self.generator.load_state_dict(self.states["generator"])
+            self.discriminator.load_state_dict(self.states["discriminator"])
             self.optimizer_generator.load_state_dict(self.states["optimizer_generator"])
             self.optimizer_discriminator.load_state_dict(self.states["optimizer_discriminator"])
             self.scheduler_generator.load_state_dict(self.states["scheduler_generator"])
@@ -517,55 +566,76 @@ class Trainer(TrainerHelper):
 
         epoch_start = self.states["epoch_start"]
         epoch_end = self.configuration.EPOCHS + 1
+        
         best_f1_score = self.states["best_f1_score"]
 
         clear_output(wait=True)
 
         for epoch in tqdm(range(epoch_start, epoch_end), desc="Training..."):
-            # Train each epoch
-            g_loss_mean_train, d_loss_mean_train, f1_score_mean_train = self._train_each_epoch()
+            (
+                g_loss_train, 
+                d_loss_train, 
+                f1_score_train, 
+                precision_score_train, 
+                recall_score_train, 
+                accuracy_score_train
+            ) = self._train_each_epoch()
 
-            # Validate each epoch
-            g_loss_mean_validation, f1_score_mean_validation = self._validate_each_epoch()
+            (
+                g_loss_mean_validation, 
+                f1_score_validation, 
+                precision_score_validation, 
+                recall_score_validation, 
+                accuracy_score_validation
+            ) = self._validate_each_epoch()
 
-            # Log to tensorboard
-            self.summary_writer.add_scalar("g_loss_train", g_loss_mean_train, epoch)
-            self.summary_writer.add_scalar("d_loss_train", d_loss_mean_train, epoch)
+            self.summary_writer.add_scalar("g_loss_train", g_loss_train, epoch)
+            self.summary_writer.add_scalar("d_loss_train", d_loss_train, epoch)
             self.summary_writer.add_scalar("g_loss_validation", g_loss_mean_validation, epoch)
-            self.summary_writer.add_scalar("f1_score_train", f1_score_mean_train, epoch)
-            self.summary_writer.add_scalar("f1_score_validation", f1_score_mean_validation, epoch)
+            self.summary_writer.add_scalar("f1_score_train", f1_score_train, epoch)
+            self.summary_writer.add_scalar("f1_score_validation", f1_score_validation, epoch)
+            self.summary_writer.add_scalar("precision_score_train", precision_score_train, epoch)
+            self.summary_writer.add_scalar("precision_score_validation", precision_score_validation, epoch)
+            self.summary_writer.add_scalar("recall_score_train", recall_score_train, epoch)
+            self.summary_writer.add_scalar("recall_score_validation", recall_score_validation, epoch)
+            self.summary_writer.add_scalar("accuracy_score_train", accuracy_score_train, epoch)
+            self.summary_writer.add_scalar("accuracy_score_validation", accuracy_score_validation, epoch)
 
-            if self.sanity_checking:
-                # Visualize train data
-                train_fig = self._visualize_one(
-                    self.dataloaders.train_dataloader.dataset[0][0].to(self.configuration.DEVICE),
-                    self.dataloaders.train_dataloader.dataset[0][1].to(self.configuration.DEVICE),
-                    epoch,
-                    to_pil=True,
-                )
-                
-                train_fig = np.array(train_fig)
-                train_fig = np.transpose(train_fig, (2, 0, 1))
-                train_fig = torch.tensor(train_fig, dtype=torch.uint8)
+            current_f1_score = (
+                f1_score_train * self.configuration.F1_SCORE_TRAIN_WEIGHT
+                + f1_score_validation * self.configuration.F1_SCORE_VALIDATION_WEIGHT
+            )
+            
+            if best_f1_score < current_f1_score:
+                print(f"Best f1 score updated: {best_f1_score} -> {current_f1_score}")
+                best_f1_score = current_f1_score
 
-                self.summary_writer.add_image(f"epoch_{epoch}", train_fig, epoch)
+                if self.sanity_checking:
+                    train_fig = self._visualize_one(
+                        self.dataloaders.train_dataloader.dataset[0][0].to(self.configuration.DEVICE),
+                        self.dataloaders.train_dataloader.dataset[0][1].to(self.configuration.DEVICE),
+                        epoch,
+                        to_pil=True,
+                    )
+                    
+                    train_fig = np.array(train_fig)
+                    train_fig = np.transpose(train_fig, (2, 0, 1))
+                    train_fig = torch.tensor(train_fig, dtype=torch.uint8)
 
-            else:
-                
-                current_f1_score = (
-                    f1_score_mean_train * self.configuration.F1_SCORE_TRAIN_WEIGHT
-                    + f1_score_mean_validation * self.configuration.F1_SCORE_VALIDATION_WEIGHT
-                )
-                # Save the best states
-                if best_f1_score < current_f1_score:
-                    print(f"Best f1 score updated: {best_f1_score} -> {current_f1_score}")
-                    best_f1_score = current_f1_score
+                    self.summary_writer.add_image(f"epoch_{epoch}", train_fig, epoch)
 
+                else:
                     torch.save(
                         {
                             "epoch_start": epoch,
                             "epoch_end": epoch_end,
                             "best_f1_score": best_f1_score,
+                            "f1_score_train": f1_score_train,
+                            "f1_score_validation": f1_score_validation,
+                            "recall_score_train": recall_score_train,
+                            "recall_score_validation": recall_score_validation,
+                            "accuracy_score_train": accuracy_score_train,
+                            "accuracy_score_validation": accuracy_score_validation,
                             "generator": self.generator.state_dict(),
                             "discriminator": self.discriminator.state_dict(),
                             "optimizer_generator": self.optimizer_generator.state_dict(),
