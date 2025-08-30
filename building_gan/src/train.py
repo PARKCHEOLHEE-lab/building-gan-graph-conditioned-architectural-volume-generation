@@ -33,8 +33,8 @@ discriminator = VoxelGNNDiscriminator(
     voxel_graph_dim=_voxel_graph.x.shape[1]
 )
 
-optimizer_generator = torch.optim.AdamW(generator.parameters(), lr=configuration.LEARNING_RATE_GENERATOR)
-optimizer_discriminator = torch.optim.AdamW(discriminator.parameters(), lr=configuration.LEARNING_RATE_DISCRIMINATOR)
+optimizer_generator = torch.optim.Adam(generator.parameters(), lr=configuration.LEARNING_RATE_GENERATOR, betas=configuration.BETAS)
+optimizer_discriminator = torch.optim.Adam(discriminator.parameters(), lr=configuration.LEARNING_RATE_DISCRIMINATOR, betas=configuration.BETAS)
 scheduler_generator = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer_generator, T_max=configuration.EPOCHS)
 
 trainer = Trainer(
@@ -45,7 +45,7 @@ trainer = Trainer(
     optimizer_discriminator=optimizer_discriminator,
     scheduler_generator=scheduler_generator,
     configuration=configuration,
-    log_dir=os.path.join(configuration.LOG_DIR, "_base")
+    log_dir=os.path.join(configuration.LOG_DIR, "adam")
 )
 
 trainer.train()
