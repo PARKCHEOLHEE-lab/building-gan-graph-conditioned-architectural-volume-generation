@@ -451,7 +451,7 @@ class TrainerHelper:
     @torch.no_grad()
     def _validate_each_epoch(self):
         if self.sanity_checking:
-            return 0, 0, 0, 0
+            return 0, 0, 0, 0, 0
 
         self.generator.eval()
         self.discriminator.eval()
