@@ -306,7 +306,8 @@ class TrainerHelper:
         
         else:
             g_loss_adv = torch.nn.functional.binary_cross_entropy(d_fake, torch.ones_like(d_fake))
-            g_loss_adv *= self.configuration.LAMBDA_ADV
+            
+        g_loss_adv *= self.configuration.LAMBDA_ADV
         
         g_loss_label = torch.nn.functional.cross_entropy(logits, voxel_graph.type)
         g_loss_label *= self.configuration.LAMBDA_LABEL
