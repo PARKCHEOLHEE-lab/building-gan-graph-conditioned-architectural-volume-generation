@@ -45,7 +45,7 @@ trainer = Trainer(
     optimizer_discriminator=optimizer_discriminator,
     scheduler_generator=scheduler_generator,
     configuration=configuration,
-    log_dir=os.path.join(configuration.LOG_DIR, "adam")
+    log_dir=os.path.join(configuration.LOG_DIR, "ratio01-void02")
 )
 
 trainer.train()
