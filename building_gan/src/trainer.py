@@ -203,6 +203,14 @@ class TrainerHelper:
             validation_random_indices = torch.randint(
                 len(self.dataloaders.validation_dataloader.dataset), size=(num_samples,)
             )
+            
+        title_train = None
+        if epoch is not None:
+            title_train = f"train at epoch: {epoch}\n"
+            
+        title_validation = None
+        if epoch is not None:
+            title_validation = f"test at epoch: {epoch}\n" if use_test_dataset else f"validation at epoch: {epoch}\n"
 
         for ti, vi in zip(train_random_indices, validation_random_indices):
             local_graph, voxel_graph = self.dataloaders.train_dataloader.dataset[ti]
@@ -221,23 +229,25 @@ class TrainerHelper:
                 set(d) for d in voxel_graph_validation.data_number
             ]
 
-            train_fig = self._visualize_one(
-                local_graph.to(self.configuration.DEVICE),
-                voxel_graph.to(self.configuration.DEVICE),
-                epoch,
-                title=f"train at epoch: {epoch}\n",
-                to_pil=True,
-            )
+            if not use_test_dataset:
+                train_fig = self._visualize_one(
+                    local_graph.to(self.configuration.DEVICE),
+                    voxel_graph.to(self.configuration.DEVICE),
+                    epoch,
+                    title=title_train,
+                    to_pil=True,
+                )
+
+                train_figs.append(train_fig)
 
             validation_fig = self._visualize_one(
                 local_graph_validation.to(self.configuration.DEVICE),
                 voxel_graph_validation.to(self.configuration.DEVICE),
                 epoch,
-                title=f"test at epoch: {epoch}\n" if use_test_dataset else f"validation at epoch: {epoch}\n", 
+                title=title_validation, 
                 to_pil=True,
             )
 
-            train_figs.append(train_fig)
             validation_figs.append(validation_fig)
 
         figs = train_figs + validation_figs
@@ -648,5 +658,11 @@ class Trainer(TrainerHelper):
 
                     merged_fig = self.evaluate_qualitatively(epoch, num_samples=2, to_tensor=True)
                     self.summary_writer.add_image(f"epoch_{epoch}", merged_fig, epoch)
+                    
+            else:
+                if not self.sanity_checking:
+                    states = torch.load(os.path.join(self.log_dir, "states.pt"))
+                    states["epoch_start"] = epoch
+                    torch.save(states, os.path.join(self.log_dir, "states.pt"))
                                 
             self.scheduler_generator.step()
