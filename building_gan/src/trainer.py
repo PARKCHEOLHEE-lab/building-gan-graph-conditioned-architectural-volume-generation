@@ -666,3 +666,33 @@ class Trainer(TrainerHelper):
                     torch.save(states, os.path.join(self.log_dir, "states.pt"))
                                 
             self.scheduler_generator.step()
+            
+    @runtime_calculator
+    @torch.no_grad()
+    def test(self):
+        
+        # f1_score_total_test = []
+        # precision_score_total_test = []
+        # recall_score_total_test = []
+        # accuracy_score_total_test = []
+
+        # # test f1 score
+        # for local_graph, voxel_graph in self.dataloaders.test_dataloader:
+            
+        #     local_graph = local_graph.to(self.configuration.DEVICE)
+        #     voxel_graph = voxel_graph.to(self.configuration.DEVICE)
+
+        #     assert [set(d) for d in local_graph.data_number] == [set(d) for d in voxel_graph.data_number]
+
+        #     z = torch.randn(1, voxel_graph.num_nodes, self.configuration.Z_DIM).to(self.configuration.DEVICE)
+        #     logits, label_hard, label_soft = self.generator(local_graph, voxel_graph, z)
+        #     label_hard = label_hard.unsqueeze(0)
+        #     label_soft = label_soft.unsqueeze(0)
+            
+        #     f1_score, precision_score, recall_score, accuracy_score = self._compute_metrics(voxel_graph, label_hard)
+        #     f1_score_total_test.append(f1_score)
+        #     precision_score_total_test.append(precision_score)
+        #     recall_score_total_test.append(recall_score)
+        #     accuracy_score_total_test.append(accuracy_score)
+
+        return
