@@ -67,15 +67,15 @@ class ModelConfiguration:
     LEARNING_RATE_DISCRIMINATOR = 0.0002
 
     LAMBDA_RATIO = 0.1
-    LAMBDA_RATIO_VOID = 0.2
+    LAMBDA_RATIO_VOID = 0.1
     LAMBDA_LABEL = 0.0
     LAMBDA_ADV = 1.0
     LAMBDA_FAR = 0.1
     LAMBDA_GP = 10.0
-    
+        
     BETAS = (0.5, 0.999)
     
-    F1_SCORE_TRAIN_WEIGHT = 0.0
+    F1_SCORE_TRAIN_WEIGHT = 0.05
     F1_SCORE_VALIDATION_WEIGHT = 1.0
     
     METRICS_AVERAGE = "macro"
