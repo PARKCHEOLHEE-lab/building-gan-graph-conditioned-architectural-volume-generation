@@ -178,7 +178,7 @@ class GraphDataLoaders:
             batch_size=self.configuration.BATCH_SIZE,
             num_workers=self.configuration.NUM_WORKERS,
             shuffle=True,
-            drop_last=True,
+            drop_last=False,
             collate_fn=GraphDataset.collate_fn,
         )
 
@@ -188,7 +188,7 @@ class GraphDataLoaders:
                 batch_size=self.configuration.BATCH_SIZE,
                 num_workers=self.configuration.NUM_WORKERS,
                 shuffle=True,
-                drop_last=True,
+                drop_last=False,
                 collate_fn=GraphDataset.collate_fn,
             )
             if not self.sanity_checking
@@ -201,7 +201,7 @@ class GraphDataLoaders:
                 batch_size=self.configuration.BATCH_SIZE,
                 num_workers=self.configuration.NUM_WORKERS,
                 shuffle=True,
-                drop_last=True,
+                drop_last=False,
                 collate_fn=GraphDataset.collate_fn,
             )
             if not self.sanity_checking
