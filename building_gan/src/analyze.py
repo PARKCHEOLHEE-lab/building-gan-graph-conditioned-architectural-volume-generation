@@ -77,8 +77,14 @@ def main():
             global_graph_data["far"], 
             gfa / global_graph_data["site_area"],
         )
+        
+    voxels_num = sum(a for a in voxel_types.values())
+    voxel_types_sorted = sorted(list(voxel_types.items()), key=lambda x: x[0])
+    voxel_types_ratio = list([*a, round(a[1] / voxels_num, 5)] for a in voxel_types_sorted)
     
-    print("voxel_types:", sorted(list(voxel_types.items()), key=lambda x: x[0]))  
+    assert math.isclose(sum(r[2] for r in  voxel_types_ratio), 1.0)
+    
+    print("voxel_types_ratio:", voxel_types_ratio)
     print("min(site_areas):", min(site_areas))  
     print("max(site_areas):", max(site_areas))
     print("min(dimensions):", min(dimensions))
@@ -90,8 +96,8 @@ def main():
     print("min(floor_levels):", min(floor_levels))
     print("max(floor_levels):", max(floor_levels))
 
-    # 100%|█████████████████████████████████████████████████████████████████| 10000/10000 [00:56<00:00, 176.36it/s]
-    # voxel_types: [(-1, 1342993), (0, 522887), (1, 253412), (2, 109624), (3, 197512), (4, 1520140), (5, 44545)]
+    # 100%|███████████████████████████████████████████████████████████████████████████████████████████████████████████████████| 10000/10000 [01:35<00:00, 104.38it/s]
+    # voxel_types_ratio: [[-1, 1342993, 0.3365], [0, 522887, 0.13101], [1, 253412, 0.06349], [2, 109624, 0.02747], [3, 197512, 0.04949], [4, 1520140, 0.38088], [5, 44545, 0.01116]]
     # min(site_areas): 324
     # max(site_areas): 1600
     # min(dimensions): 3.0
