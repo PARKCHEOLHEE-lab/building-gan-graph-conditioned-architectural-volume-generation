@@ -55,25 +55,32 @@ class TrainerHelper:
         local_graph,
         voxel_graph,
         epoch,
+        iteration,
         show=False,
         title=None,
         to_pil=False,
     ):
         plt.close("all")
         
-        self.generator.eval()
-        self.discriminator.eval()
+        best_f1 = 0
+        voxel_types_generated = None
 
-        z = torch.randn(1, voxel_graph.num_nodes, self.configuration.Z_DIM).to(self.configuration.DEVICE)
-        _, label_hard, _ = self.generator(local_graph, voxel_graph, z)
+        for _ in range(iteration):
 
-        voxel_types_generated = label_hard.argmax(dim=1)
-        
-        f1_score = metrics.f1_score(
-            voxel_graph.type.cpu(), 
-            voxel_types_generated.cpu(), 
-            average=self.configuration.METRICS_AVERAGE,
-        )
+            z = torch.randn(1, voxel_graph.num_nodes, self.configuration.Z_DIM).to(self.configuration.DEVICE)
+            _, label_hard, _ = self.generator(local_graph, voxel_graph, z)
+
+            _voxel_types_generated = label_hard.argmax(dim=1)
+            
+            f1_score = metrics.f1_score(
+                voxel_graph.type.cpu(), 
+                _voxel_types_generated.cpu(), 
+                average=self.configuration.METRICS_AVERAGE,
+            )
+            
+            if best_f1 < f1_score:
+                best_f1 = f1_score
+                voxel_types_generated = _voxel_types_generated
         
         fig = plt.figure(figsize=(20, 5))
         if title is not None:
@@ -174,9 +181,6 @@ class TrainerHelper:
             ax.set_ylim(min_coords[1], max_coords[1])
             ax.set_zlim(min_coords[0], max_coords[0])
 
-        self.generator.train()
-        self.discriminator.train()
-
         if show:
             plt.show()
 
@@ -189,19 +193,27 @@ class TrainerHelper:
             return fig
 
     @runtime_calculator
-    def evaluate_qualitatively(self, epoch, num_samples=2, to_tensor=False, use_test_dataset=False):
+    def evaluate_qualitatively(
+        self, 
+        epoch, 
+        iteration=1, 
+        num_samples_to_viz=2, 
+        to_tensor=False, 
+        use_test_dataset=False, 
+        show=False
+    ):
         
         train_figs = []
         validation_figs = []
-        train_random_indices = torch.randint(len(self.dataloaders.train_dataloader.dataset), size=(num_samples,))
+        train_random_indices = torch.randint(len(self.dataloaders.train_dataloader.dataset), size=(num_samples_to_viz,))
 
         if use_test_dataset:
             validation_random_indices = torch.randint(
-                len(self.dataloaders.test_dataloader.dataset), size=(num_samples,)
+                len(self.dataloaders.test_dataloader.dataset), size=(num_samples_to_viz,)
             )
         else:
             validation_random_indices = torch.randint(
-                len(self.dataloaders.validation_dataloader.dataset), size=(num_samples,)
+                len(self.dataloaders.validation_dataloader.dataset), size=(num_samples_to_viz,)
             )
             
         title_train = None
@@ -234,8 +246,10 @@ class TrainerHelper:
                     local_graph.to(self.configuration.DEVICE),
                     voxel_graph.to(self.configuration.DEVICE),
                     epoch,
+                    iteration,
                     title=title_train,
                     to_pil=True,
+                    show=show,
                 )
 
                 train_figs.append(train_fig)
@@ -244,8 +258,10 @@ class TrainerHelper:
                 local_graph_validation.to(self.configuration.DEVICE),
                 voxel_graph_validation.to(self.configuration.DEVICE),
                 epoch,
+                iteration,
                 title=title_validation, 
                 to_pil=True,
+                show=show,
             )
 
             validation_figs.append(validation_fig)
@@ -389,7 +405,31 @@ class TrainerHelper:
             voxel_types_generated,
         )
         
-        return f1_score, precision_score, recall_score, accuracy_score
+        f1_scores = []
+        si = 0
+        for gi in range(voxel_graph.num_graphs):
+            each_voxel_graph = voxel_graph[gi]
+            
+            ei = si + each_voxel_graph.num_nodes
+            
+            voxel_type = each_voxel_graph.type.cpu()
+            voxel_type_generated = label_hard.squeeze(0)[si:ei].argmax(dim=1).cpu()
+
+            assert voxel_type.shape == voxel_type_generated.shape
+
+            f1_scores.append(
+                metrics.f1_score(
+                    voxel_type, 
+                    voxel_type_generated,
+                    average=self.configuration.METRICS_AVERAGE,
+                )
+            )
+            
+            si = ei
+
+        assert si == ei == voxel_graph.num_nodes
+        
+        return f1_score, f1_scores, precision_score, recall_score, accuracy_score
 
     @runtime_calculator
     def _train_each_epoch(self):
@@ -400,6 +440,7 @@ class TrainerHelper:
         d_loss_total_train = []
 
         f1_score_total_train = []
+        f1_scores_total_train = []
         precision_score_total_train = []
         recall_score_total_train = []
         accuracy_score_total_train = []
@@ -442,8 +483,9 @@ class TrainerHelper:
 
             self.optimizer_generator.step()
             
-            f1_score, precision_score, recall_score, accuracy_score = self._compute_metrics(voxel_graph, label_hard)
+            f1_score, f1_scores, precision_score, recall_score, accuracy_score = self._compute_metrics(voxel_graph, label_hard)
             f1_score_total_train.append(f1_score)
+            f1_scores_total_train.extend(f1_scores)
             precision_score_total_train.append(precision_score)
             recall_score_total_train.append(recall_score)
             accuracy_score_total_train.append(accuracy_score)
@@ -456,7 +498,15 @@ class TrainerHelper:
         recall_score_train = torch.tensor(recall_score_total_train).mean().item()
         accuracy_score_train = torch.tensor(accuracy_score_total_train).mean().item()
 
-        return g_loss_train, d_loss_train, f1_score_train, precision_score_train, recall_score_train, accuracy_score_train
+        return (
+            g_loss_train, 
+            d_loss_train, 
+            f1_score_train, 
+            min(f1_scores_total_train),
+            precision_score_train, 
+            recall_score_train, 
+            accuracy_score_train
+        )
 
     @runtime_calculator
     @torch.no_grad()
@@ -464,12 +514,10 @@ class TrainerHelper:
         if self.sanity_checking:
             return 0, 0, 0, 0, 0
 
-        self.generator.eval()
-        self.discriminator.eval()
-
         g_loss_total_validation = []
 
         f1_score_total_validation = []
+        f1_scores_total_validation = []
         precision_score_total_validation = []
         recall_score_total_validation = []
         accuracy_score_total_validation = []
@@ -488,8 +536,9 @@ class TrainerHelper:
             g_loss = self._compute_generator_loss(local_graph, voxel_graph, logits, label_hard)
             g_loss_total_validation.append(g_loss.item())
             
-            f1_score, precision_score, recall_score, accuracy_score = self._compute_metrics(voxel_graph, label_hard)
+            f1_score, f1_scores, precision_score, recall_score, accuracy_score = self._compute_metrics(voxel_graph, label_hard)
             f1_score_total_validation.append(f1_score)
+            f1_scores_total_validation.extend(f1_scores)
             precision_score_total_validation.append(precision_score)
             recall_score_total_validation.append(recall_score)
             accuracy_score_total_validation.append(accuracy_score)
@@ -501,10 +550,14 @@ class TrainerHelper:
         recall_score_validation = torch.tensor(recall_score_total_validation).mean().item()
         accuracy_score_validation = torch.tensor(accuracy_score_total_validation).mean().item()
 
-        self.generator.train()
-        self.discriminator.train()
-
-        return g_loss_mean_validation, f1_score_validation, precision_score_validation, recall_score_validation, accuracy_score_validation
+        return (
+            g_loss_mean_validation, 
+            f1_score_validation, 
+            min(f1_scores_total_validation),
+            precision_score_validation, 
+            recall_score_validation, 
+            accuracy_score_validation
+        )
 
 
 class Trainer(TrainerHelper):
@@ -587,6 +640,7 @@ class Trainer(TrainerHelper):
                 g_loss_train, 
                 d_loss_train, 
                 f1_score_train, 
+                f1_score_min_train,
                 precision_score_train, 
                 recall_score_train, 
                 accuracy_score_train
@@ -595,6 +649,7 @@ class Trainer(TrainerHelper):
             (
                 g_loss_mean_validation, 
                 f1_score_validation, 
+                f1_score_min_validation, 
                 precision_score_validation, 
                 recall_score_validation, 
                 accuracy_score_validation
@@ -605,6 +660,8 @@ class Trainer(TrainerHelper):
             self.summary_writer.add_scalar("g_loss_validation", g_loss_mean_validation, epoch)
             self.summary_writer.add_scalar("f1_score_train", f1_score_train, epoch)
             self.summary_writer.add_scalar("f1_score_validation", f1_score_validation, epoch)
+            self.summary_writer.add_scalar("f1_score_min_train", f1_score_min_train, epoch)
+            self.summary_writer.add_scalar("f1_score_min_validation", f1_score_min_validation, epoch)
             self.summary_writer.add_scalar("precision_score_train", precision_score_train, epoch)
             self.summary_writer.add_scalar("precision_score_validation", precision_score_validation, epoch)
             self.summary_writer.add_scalar("recall_score_train", recall_score_train, epoch)
@@ -613,8 +670,8 @@ class Trainer(TrainerHelper):
             self.summary_writer.add_scalar("accuracy_score_validation", accuracy_score_validation, epoch)
 
             current_f1_score = (
-                f1_score_train * self.configuration.F1_SCORE_TRAIN_WEIGHT
-                + f1_score_validation * self.configuration.F1_SCORE_VALIDATION_WEIGHT
+                f1_score_min_train * self.configuration.F1_SCORE_TRAIN_WEIGHT
+                + f1_score_min_validation * self.configuration.F1_SCORE_VALIDATION_WEIGHT
             )
             
             if best_f1_score < current_f1_score:
@@ -626,6 +683,7 @@ class Trainer(TrainerHelper):
                         self.dataloaders.train_dataloader.dataset[0][0].to(self.configuration.DEVICE),
                         self.dataloaders.train_dataloader.dataset[0][1].to(self.configuration.DEVICE),
                         epoch,
+                        iteration,
                         to_pil=True,
                     )
                     
@@ -656,7 +714,7 @@ class Trainer(TrainerHelper):
                         os.path.join(self.log_dir, "states.pt"),
                     )
 
-                    merged_fig = self.evaluate_qualitatively(epoch, num_samples=2, to_tensor=True)
+                    merged_fig = self.evaluate_qualitatively(epoch, num_samples_to_viz=2, to_tensor=True)
                     self.summary_writer.add_image(f"epoch_{epoch}", merged_fig, epoch)
                     
             else:
@@ -667,32 +725,60 @@ class Trainer(TrainerHelper):
                                 
             self.scheduler_generator.step()
             
-    @runtime_calculator
     @torch.no_grad()
-    def test(self):
+    def test(self, num_samples_to_viz: int, use_eval: bool = False):
         
-        # f1_score_total_test = []
-        # precision_score_total_test = []
-        # recall_score_total_test = []
-        # accuracy_score_total_test = []
+        if use_eval:
+            self.generator.eval()
+        
+        f1_scores_total_test = []
+        f1_score_total_test = []
+        precision_score_total_test = []
+        recall_score_total_test = []
+        accuracy_score_total_test = []
 
-        # # test f1 score
-        # for local_graph, voxel_graph in self.dataloaders.test_dataloader:
+        # test f1 score
+        for local_graph, voxel_graph in self.dataloaders.test_dataloader:
             
-        #     local_graph = local_graph.to(self.configuration.DEVICE)
-        #     voxel_graph = voxel_graph.to(self.configuration.DEVICE)
+            local_graph = local_graph.to(self.configuration.DEVICE)
+            voxel_graph = voxel_graph.to(self.configuration.DEVICE)
 
-        #     assert [set(d) for d in local_graph.data_number] == [set(d) for d in voxel_graph.data_number]
+            assert [set(d) for d in local_graph.data_number] == [set(d) for d in voxel_graph.data_number]
 
-        #     z = torch.randn(1, voxel_graph.num_nodes, self.configuration.Z_DIM).to(self.configuration.DEVICE)
-        #     logits, label_hard, label_soft = self.generator(local_graph, voxel_graph, z)
-        #     label_hard = label_hard.unsqueeze(0)
-        #     label_soft = label_soft.unsqueeze(0)
+            z = torch.randn(1, voxel_graph.num_nodes, self.configuration.Z_DIM).to(self.configuration.DEVICE)
+            logits, label_hard, label_soft = self.generator(local_graph, voxel_graph, z)
+            label_hard = label_hard.unsqueeze(0)
+            label_soft = label_soft.unsqueeze(0)
             
-        #     f1_score, precision_score, recall_score, accuracy_score = self._compute_metrics(voxel_graph, label_hard)
-        #     f1_score_total_test.append(f1_score)
-        #     precision_score_total_test.append(precision_score)
-        #     recall_score_total_test.append(recall_score)
-        #     accuracy_score_total_test.append(accuracy_score)
-
-        return
+            f1_score, f1_scores, precision_score, recall_score, accuracy_score = self._compute_metrics(voxel_graph, label_hard)
+            f1_score_total_test.append(f1_score)
+            f1_scores_total_test.extend(f1_scores)
+            precision_score_total_test.append(precision_score)
+            recall_score_total_test.append(recall_score)
+            accuracy_score_total_test.append(accuracy_score)
+            
+        f1_score_test = torch.tensor(f1_score_total_test).mean().item()
+        f1_score_min_test = min(f1_scores_total_test)
+        precision_score_test = torch.tensor(precision_score_total_test).mean().item()
+        recall_score_test = torch.tensor(recall_score_total_test).mean().item()
+        accuracy_score_test = torch.tensor(accuracy_score_total_test).mean().item()
+        
+        print(
+            f"""
+            f1_score_test: {f1_score_test}
+            f1_score_min_test: {f1_score_min_test}
+            precision_score_test: {precision_score_test}
+            recall_score_test: {recall_score_test}
+            accuracy_score_test: {accuracy_score_test}
+            """
+        )
+            
+        self.evaluate_qualitatively(
+            epoch=None,
+            num_samples_to_viz=num_samples_to_viz, 
+            to_tensor=False, 
+            use_test_dataset=True,
+            show=True
+        )
+        
+        self.generator.train()
