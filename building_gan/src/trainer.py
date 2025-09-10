@@ -76,6 +76,7 @@ class TrainerHelper:
                 voxel_graph.type.cpu(), 
                 _voxel_types_generated.cpu(), 
                 average=self.configuration.METRICS_AVERAGE,
+                zero_division=0,
             )
             
             if best_f1 < f1_score:
@@ -386,18 +387,21 @@ class TrainerHelper:
             voxel_types, 
             voxel_types_generated, 
             average=self.configuration.METRICS_AVERAGE,
+            zero_division=0,
         )
         
         precision_score = metrics.precision_score(
             voxel_types, 
             voxel_types_generated,
             average=self.configuration.METRICS_AVERAGE,
+            zero_division=0,
         )
         
         recall_score = metrics.recall_score(
             voxel_types, 
             voxel_types_generated,
             average=self.configuration.METRICS_AVERAGE,
+            zero_division=0,
         )
         
         accuracy_score = metrics.accuracy_score(
@@ -422,6 +426,7 @@ class TrainerHelper:
                     voxel_type, 
                     voxel_type_generated,
                     average=self.configuration.METRICS_AVERAGE,
+                    zero_division=0,
                 )
             )
             
