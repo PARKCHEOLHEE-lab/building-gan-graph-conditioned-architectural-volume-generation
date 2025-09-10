@@ -342,10 +342,10 @@ class TrainerHelper:
         label_ratio_g = label_hard.squeeze(0).sum(dim=0) / voxel_graph.num_nodes
         label_ratio = voxel_graph.types_onehot.sum(dim=0) / voxel_graph.num_nodes
 
-        g_loss_ratio = torch.nn.functional.l1_loss(label_ratio_g[:-2], label_ratio[:-2])
+        g_loss_ratio = torch.nn.functional.mse_loss(label_ratio_g[:-2], label_ratio[:-2])
         g_loss_ratio *= self.configuration.LAMBDA_RATIO
 
-        g_loss_ratio_voids = torch.nn.functional.l1_loss(label_ratio_g[-2:], label_ratio[-2:])
+        g_loss_ratio_voids = torch.nn.functional.mse_loss(label_ratio_g[-2:], label_ratio[-2:])
         g_loss_ratio_voids *= self.configuration.LAMBDA_RATIO_VOID
         
         voxel_types_generated = label_hard.squeeze(0).argmax(dim=1)
@@ -371,7 +371,7 @@ class TrainerHelper:
             
             si = ei
             
-        g_loss_far = torch.nn.functional.l1_loss(torch.tensor(far_unique_generated), torch.tensor(far_unique))
+        g_loss_far = torch.nn.functional.mse_loss(torch.tensor(far_unique_generated), torch.tensor(far_unique))
         g_loss_far *= self.configuration.LAMBDA_FAR
         
         g_loss = g_loss_adv + g_loss_ratio + g_loss_label + g_loss_ratio_voids + g_loss_far
