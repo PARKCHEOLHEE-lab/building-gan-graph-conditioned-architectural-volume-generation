@@ -660,6 +660,11 @@ class Trainer(TrainerHelper):
                 accuracy_score_validation
             ) = self._validate_each_epoch()
 
+            current_f1_score = (
+                f1_score_min_train * self.configuration.F1_SCORE_TRAIN_WEIGHT
+                + f1_score_min_validation * self.configuration.F1_SCORE_VALIDATION_WEIGHT
+            )
+
             self.summary_writer.add_scalar("g_loss_train", g_loss_train, epoch)
             self.summary_writer.add_scalar("d_loss_train", d_loss_train, epoch)
             self.summary_writer.add_scalar("g_loss_validation", g_loss_mean_validation, epoch)
@@ -667,17 +672,13 @@ class Trainer(TrainerHelper):
             self.summary_writer.add_scalar("f1_score_validation", f1_score_validation, epoch)
             self.summary_writer.add_scalar("f1_score_min_train", f1_score_min_train, epoch)
             self.summary_writer.add_scalar("f1_score_min_validation", f1_score_min_validation, epoch)
+            self.summary_writer.add_scalar("f1_score_min_weightedsum", current_f1_score, epoch)
             self.summary_writer.add_scalar("precision_score_train", precision_score_train, epoch)
             self.summary_writer.add_scalar("precision_score_validation", precision_score_validation, epoch)
             self.summary_writer.add_scalar("recall_score_train", recall_score_train, epoch)
             self.summary_writer.add_scalar("recall_score_validation", recall_score_validation, epoch)
             self.summary_writer.add_scalar("accuracy_score_train", accuracy_score_train, epoch)
             self.summary_writer.add_scalar("accuracy_score_validation", accuracy_score_validation, epoch)
-
-            current_f1_score = (
-                f1_score_min_train * self.configuration.F1_SCORE_TRAIN_WEIGHT
-                + f1_score_min_validation * self.configuration.F1_SCORE_VALIDATION_WEIGHT
-            )
             
             if best_f1_score < current_f1_score:
                 print(f"Best f1 score updated: {best_f1_score} -> {current_f1_score}")
@@ -706,6 +707,9 @@ class Trainer(TrainerHelper):
                             "best_f1_score": best_f1_score,
                             "f1_score_train": f1_score_train,
                             "f1_score_validation": f1_score_validation,
+                            "f1_score_min_train": f1_score_min_train,
+                            "f1_score_min_validation": f1_score_min_validation,
+                            "f1_score_min_weightedsum": current_f1_score,
                             "recall_score_train": recall_score_train,
                             "recall_score_validation": recall_score_validation,
                             "accuracy_score_train": accuracy_score_train,
