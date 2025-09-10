@@ -80,6 +80,7 @@ class VoxelGraphData:
 class GraphDataset(Dataset):
     def __init__(self, configuration: Configuration):
         super().__init__()
+        
         self.configuration = configuration
 
         self.local_graph_data_files = [
