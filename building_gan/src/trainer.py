@@ -204,6 +204,9 @@ class TrainerHelper:
         show=False
     ):
         
+        self.generator.eval()
+        self.discriminator.eval()
+        
         train_figs = []
         validation_figs = []
         train_random_indices = torch.randint(len(self.dataloaders.train_dataloader.dataset), size=(num_samples_to_viz,))
@@ -279,6 +282,9 @@ class TrainerHelper:
             merged_fig = np.array(merged_fig)
             merged_fig = np.transpose(merged_fig, (2, 0, 1))
             merged_fig = torch.tensor(merged_fig, dtype=torch.uint8)
+
+        self.generator.train()
+        self.discriminator.train()
 
         return merged_fig
     
@@ -518,6 +524,9 @@ class TrainerHelper:
     def _validate_each_epoch(self):
         if self.sanity_checking:
             return 0, 0, 0, 0, 0
+        
+        self.generator.eval()
+        self.discriminator.eval()
 
         g_loss_total_validation = []
 
@@ -555,6 +564,9 @@ class TrainerHelper:
         recall_score_validation = torch.tensor(recall_score_total_validation).mean().item()
         accuracy_score_validation = torch.tensor(accuracy_score_total_validation).mean().item()
 
+        self.generator.train()
+        self.discriminator.train()
+        
         return (
             g_loss_mean_validation, 
             f1_score_validation, 
@@ -735,10 +747,10 @@ class Trainer(TrainerHelper):
             self.scheduler_generator.step()
             
     @torch.no_grad()
-    def test(self, num_samples_to_viz: int, use_eval: bool = False):
+    def test(self, num_samples_to_viz: int):
         
-        if use_eval:
-            self.generator.eval()
+        self.generator.eval()
+        self.discriminator.eval()
         
         f1_scores_total_test = []
         f1_score_total_test = []
@@ -791,3 +803,4 @@ class Trainer(TrainerHelper):
         )
         
         self.generator.train()
+        self.discriminator.train()
