@@ -33,14 +33,14 @@ class VoxelGNNGenerator(nn.Module):
         matched_features_encoder_modules = []
         matched_features_encoder_modules += [
             nn.Linear(local_graph_dim, configuration.LOCAL_ENCODER_HIDDEN_DIM),
-            nn.BatchNorm1d(configuration.LOCAL_ENCODER_HIDDEN_DIM),
+            nn.LayerNorm(configuration.LOCAL_ENCODER_HIDDEN_DIM),
             nn.LeakyReLU(0.2),
         ]
 
         for _ in range(configuration.LOCAL_GRAPH_ENCODER_REPEAT):
             matched_features_encoder_modules += [
                 nn.Linear(configuration.LOCAL_ENCODER_HIDDEN_DIM, configuration.LOCAL_ENCODER_HIDDEN_DIM),
-                nn.BatchNorm1d(configuration.LOCAL_ENCODER_HIDDEN_DIM),
+                nn.LayerNorm(configuration.LOCAL_ENCODER_HIDDEN_DIM),
                 nn.LeakyReLU(0.2),
             ]
 
@@ -52,14 +52,14 @@ class VoxelGNNGenerator(nn.Module):
                 configuration.LOCAL_ENCODER_HIDDEN_DIM + voxel_graph_dim + configuration.Z_DIM,
                 configuration.GENERATOR_HIDDEN_DIM,
             ),
-            nn.BatchNorm1d(configuration.GENERATOR_HIDDEN_DIM),
+            nn.LayerNorm(configuration.GENERATOR_HIDDEN_DIM),
             nn.LeakyReLU(0.2),
         ]
 
         for _ in range(configuration.GENERATOR_MLP_ENCODER_REPEAT):
             self.mlp_encoder_modules += [
                 nn.Linear(configuration.GENERATOR_HIDDEN_DIM, configuration.GENERATOR_HIDDEN_DIM),
-                nn.BatchNorm1d(configuration.GENERATOR_HIDDEN_DIM),
+                nn.LayerNorm(configuration.GENERATOR_HIDDEN_DIM),
                 nn.LeakyReLU(0.2),
             ]
 
@@ -98,16 +98,16 @@ class VoxelGNNGenerator(nn.Module):
                 + configuration.GENERATOR_HIDDEN_DIM,
                 configuration.GENERATOR_HIDDEN_DIM,
             ),
-            nn.BatchNorm1d(configuration.GENERATOR_HIDDEN_DIM),
+            nn.LayerNorm(configuration.GENERATOR_HIDDEN_DIM),
             nn.LeakyReLU(0.2),
             nn.Linear(configuration.GENERATOR_HIDDEN_DIM, configuration.GENERATOR_HIDDEN_DIM // 2),
-            nn.BatchNorm1d(configuration.GENERATOR_HIDDEN_DIM // 2),
+            nn.LayerNorm(configuration.GENERATOR_HIDDEN_DIM // 2),
             nn.LeakyReLU(0.2),
             nn.Linear(configuration.GENERATOR_HIDDEN_DIM // 2, configuration.GENERATOR_HIDDEN_DIM // 4),
-            nn.BatchNorm1d(configuration.GENERATOR_HIDDEN_DIM // 4),
+            nn.LayerNorm(configuration.GENERATOR_HIDDEN_DIM // 4),
             nn.LeakyReLU(0.2),
             nn.Linear(configuration.GENERATOR_HIDDEN_DIM // 4, configuration.GENERATOR_HIDDEN_DIM // 8),
-            nn.BatchNorm1d(configuration.GENERATOR_HIDDEN_DIM // 8),
+            nn.LayerNorm(configuration.GENERATOR_HIDDEN_DIM // 8),
             nn.LeakyReLU(0.2),
             nn.Linear(configuration.GENERATOR_HIDDEN_DIM // 8, configuration.NUM_CLASSES),
         )
