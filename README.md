@@ -10,15 +10,11 @@ This project explores the key contributions of <a href="https://arxiv.org/pdf/21
 <br>
 
 <div>
-    <img src="building_gan/assets/base-0604.png" width=100%>　　
+    <img src="building_gan/assets/base.gif" width=100%>　　
 </div>
 <p align="center" color="gray">
 <br>
-  <i>
-    Generated volumes, <br>
-    the upper two generated volumes are training data, <br>
-    and the lower two are validation data.
-    </i>
+  <i>Generated Buildings</i>
 </p>
 
 # Installation
@@ -42,40 +38,41 @@ This repository uses the [image](/.devcontainer/Dockerfile) named `nvcr.io/nvidi
 
 # File Details
 ### data
-- `building_gan/data/6types-processed_data/6types-processed_data.zip`: Data for training building-gan models. Unzip it
+- `building_gan/data/6types-raw_data-10000.zip`: Data for training building-gan models. Unzip it
 
 ### notebooks
 - `data-preprocessing.ipynb`: Data preprocessing of the original json-shaped data from this [repository](https://github.com/AutodeskAILab/Building-GAN?tab=readme-ov-file#:~:text=Download%20the%20dataset).
 - `data-visualization.ipynb`: Data visualization of the original json-shaped data.
-- `sanity-checking.ipynb`: Sanity checking of the model by testing whether the model overfits with a single data.
-- `train.ipynb`: Training models, and evaluating models qualitatively through visualization of the generated data.
+- `test.ipynb`: Training models, and evaluating models qualitatively through visualization of the generated data.
 
 ### runs
-- `base`
-    - `events.out.tfevents.1741657999.407685f53174.415.0`: TensorBoard event file containing metrics and logs trained using all data.
+- `_base`
+    - `_base.out`: Training log file generated when running the model with nohup command
+    - `events.out.tfevents.1757583498.548be1e0c115.1673827`: TensorBoard event file containing metrics and logs trained using all data.
     - `states.pt`: Saved model checkpoint containing trained model weights and states trained using all data.
-- `sanity-checking`
-    - `events.out.tfevents.1741346830.407685f53174.1428.0`:  TensorBoard event file containing metrics and logs trained using a single data.
 
 ### src
+- `analyze.py`: Data analysis for computing node type distribution, site areas, dimensions, and other dataset features from the building graph data
 - `config.py`: Configuration file containing model hyperparameters, data paths, and program type mappings
 - `data.py`: Data loading and preprocessing utilities for graph-based building data
 - `models.py`: Graph data-based GAN models including generator and discriminator architectures
+- `sanity.py`: Sanity checking for training and validating the model with a datum for debugging purposes
+- `train.py`: Main script for training the full Building-GAN model with the total dataset
 - `trainer.py`: Training loop and evaluation code for the models
 
 <br>
 
-# How to run
-1. Unzip the `building_gan/data/6types-processed_data/6types-processed_data.zip` file first, then you will see the following files:
+# Training
+1. Unzip the `building_gan/data/6types-raw_data-10000.zip` file first, then you will see the following files:
     - `building_gan/data/6types-processed_data/004001_local.pt`
     - `building_gan/data/6types-processed_data/004001_voxel.pt` <br><br>
     ( ... ) <br><br>
     - `building_gan/data/6types-processed_data/009999_local.pt`
     - `building_gan/data/6types-processed_data/009999_voxel.pt`
 
-2. Run the notebooks:
+2. Run the main script:
 
-    - `train.ipynb`: Train the full model and evaluate results
+    - `train.py`: Train the full model and evaluate results
 
 3. Check training progress and results:
     -  How to check training metrics and generated samples in TensorBoard:
@@ -83,5 +80,10 @@ This repository uses the [image](/.devcontainer/Dockerfile) named `nvcr.io/nvidi
         ```
         tensorboard --logdir=runs
         ```
-    - Check saved model checkpoints in `runs/base/states.pt`
+    - Check saved model checkpoints in `runs/_base/states.pt`
     - Generated samples and evaluation results will be saved in the notebook outputs
+
+
+# Testing
+1. Run the notebook
+    - Run `test.ipynb` to test the model and visualize generated samples.
